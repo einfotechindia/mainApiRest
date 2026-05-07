@@ -1,0 +1,51 @@
+# config:
+#   target: 'https://oddsapi.winx777.com/v2/api/oddsData?market_id=1.229691932'
+#   phases:
+#     - duration: 6000
+#       arrivalRate: 100000000
+
+# scenarios:
+#   - name: "Advanced Scenario"
+#     flow:
+#       - get:
+#           url: '/wallet-balance'
+#           capture:
+#             - json: $.event_id  
+#               as: '32998891' 
+#       - think: 2
+#       # ... (other steps in the scenario)
+
+# hooks:
+#   beforeRequest: 
+#     - function: "./hooks/beforeRequest.js"
+
+
+
+
+# config:
+#   target: 'http://101.53.148.161'  # Replace with the actual IP address
+#   phases:
+#     - duration: 300  # Duration of the test in seconds
+#       arrivalRate: 10000000000  # Number of new users per second
+
+# scenarios:
+#   - flow:
+#       - get:
+#           url: '/'  # Specify the path or endpoint you want to test
+
+
+config:
+  target: 'https://oddsapi.winx777.com'  # Target base URL
+  phases:
+    - duration: 300          # 300 seconds = 5 minutes
+      arrivalRate: 5000      # 5000 requests per second
+  defaults:
+    headers:
+      User-Agent: "artillery-load-test"  # Custom user-agent header
+scenarios:
+  - flow:
+      - get:
+          url: "/v2/api/oddsData?market_id=1.229691932"
+
+
+# artillery run load-test.yml

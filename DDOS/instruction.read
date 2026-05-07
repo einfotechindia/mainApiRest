@@ -1,0 +1,412 @@
+================================================================
+  DDoS PROTECTION — PRODUCTION DEPLOYMENT INSTRUCTIONS
+  Step by step follow karo, ek bhi step mat chhodna
+================================================================
+
+
+================================================================
+STEP 1: FOLDERS COPY KARO
+================================================================
+
+Production server pe 2 folders copy karo:
+
+  1. DDOS/         → apne project root me (jahan app.js hai)
+  2. errorLog/     → apne project root me (auto ban jayega waise bhi)
+  3. scripts/      → apne project root me (nginx wale scripts)
+
+Structure aisi honi chahiye:
+  your-project/
+  ├── app.js
+  ├── DDOS/
+  │   ├── cloudflareIPResolver.js   ← Real IP nikalata hai
+  │   ├── ddosProtection.js         ← IP scoring + behavioral block
+  │   ├── advancedRateLimiter.js    ← Rate limiting (200/120/10 per min)
+  │   ├── connectionGuard.js        ← MongoDB/Redis overload protection
+  │   ├── blockedIPLogger.js        ← Blocked IP history file banata hai
+  │   ├── cloudflareBlocker.js      ← Auto push to Cloudflare
+  │   ├── endpointShield.js         ← Login + Balance extra protection
+  │   └── healthCheck.js            ← Admin APIs + health check
+  ├── errorLog/                     ← Yahan log files ban jayengi
+  ├── scripts/
+  │   ├── nginx-ip-blocker.sh       ← Nginx auto block script
+  │   └── nginx-ddos.conf           ← Nginx config template
+  └── .env
+
+
+================================================================
+STEP 2: app.js ME CODE ADD KARO
+================================================================
+
+2A. Imports section me yeh add karo (routes se PEHLE):
+----------------------------------------------------------
+
+  // DDoS Protection
+  const cloudflareIPResolver = require('./DDOS/cloudflareIPResolver');
+  const ddosProtection = require('./DDOS/ddosProtection');
+  const advancedRateLimiter = require('./DDOS/advancedRateLimiter');
+  const connectionGuard = require('./DDOS/connectionGuard');
+  const healthRoutes = require('./DDOS/healthCheck');
+  const cloudflareBlocker = require('./DDOS/cloudflareBlocker');
+
+
+2B. Middlewares add karo — app.set('trust proxy', 1) ke BAAD,
+    aur helmet/cors/routes se PEHLE:
+----------------------------------------------------------
+
+  // LAYER 0: Cloudflare se real IP nikalo (sabse pehle hona chahiye)
+  app.use(cloudflareIPResolver);
+
+  // LAYER 1: DDoS Protection (IP scoring, behavioral analysis)
+  app.use(ddosProtection);
+
+  // LAYER 2: Rate Limiting (multi-tier)
+  app.use(advancedRateLimiter);
+
+  // LAYER 3: Connection Guard (DB overload protection)
+  app.use(connectionGuard);
+
+  NOTE: Yeh 4 lines helmet, cors, body-parser se PEHLE aani chahiye
+  Kyunki DDoS request ko pehle hi reject karna hai — parse karne ka
+  koi matlab nahi agar IP blocked hai
+
+
+2C. Health check route add karo — securityGuard ke BAAD,
+    API routes se PEHLE:
+----------------------------------------------------------
+
+  app.use(healthRoutes);
+
+
+2D. Server start ke baad Cloudflare blocker start karo:
+----------------------------------------------------------
+
+  server.listen(PORT, (error) => {
+    if (!error) {
+      console.log(`Server running on port ${PORT}`);
+      cloudflareBlocker.start();    // ← YEH LINE ADD KARO
+    }
+  });
+
+
+2E. Graceful shutdown add karo (file ke end me):
+----------------------------------------------------------
+
+  process.on('SIGTERM', () => {
+    cloudflareBlocker.stop();
+    server.close();
+  });
+  process.on('SIGINT', () => {
+    cloudflareBlocker.stop();
+    server.close();
+  });
+
+
+2F. Server timeout change karo:
+----------------------------------------------------------
+
+  PEHLE (GALAT — Slowloris attack allow karta hai):
+    server.timeout = 1000000;
+
+  AB (SAHI):
+    server.timeout = 30000;
+    server.keepAliveTimeout = 15000;
+    server.headersTimeout = 20000;
+
+
+================================================================
+STEP 3: ROUTE FILES ME ENDPOINT SHIELD ADD KARO
+================================================================
+
+Jis bhi route pe zyada attack aata hai wahan endpointShield add karo.
+
+Example — User.route.js:
+----------------------------------------------------------
+
+  // TOP pe import karo
+  const { loginShield, balanceShield } = require("../../DDOS/endpointShield");
+
+  // Login route pe loginShield lagao
+  router.post("/login", loginShield, UserController.Login);
+  router.post("/UserLoginCheck", loginShield, UserController.UserLoginCheck);
+
+  // Balance route pe balanceShield lagao (verifyToken ke BAAD)
+  router.post("/userBalance", verifyToken, balanceShield, UserController.userBalance);
+
+  NOTE: Path ../../DDOS/ hoga kyunki route file Routes/User/ me hai
+  Agar route file root me hai toh ./DDOS/ hoga
+
+
+================================================================
+STEP 4: MongoDB Connection Update Karo
+================================================================
+
+Models/Connection.js ko replace karo — pooling + retry logic:
+----------------------------------------------------------
+
+  const mongoose = require("mongoose");
+  let connecting = null;
+
+  async function initialize() {
+    const uri = process.env.DATABASE_URL;
+    if (!uri) throw new Error("DATABASE_URL is missing");
+    if (mongoose.connection.readyState === 1) return mongoose.connection;
+    if (connecting) return connecting;
+
+    mongoose.set("strictQuery", true);
+    mongoose.set("autoIndex", false);
+    mongoose.set("bufferCommands", true);
+
+    const options = {
+      maxPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE || 30),
+      minPoolSize: Number(process.env.MONGO_MIN_POOL_SIZE || 5),
+      waitQueueTimeoutMS: Number(process.env.MONGO_WAIT_QUEUE_TIMEOUT_MS || 500),
+      serverSelectionTimeoutMS: Number(process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS || 5000),
+      connectTimeoutMS: Number(process.env.MONGO_CONNECT_TIMEOUT_MS || 5000),
+      socketTimeoutMS: Number(process.env.MONGO_SOCKET_TIMEOUT_MS || 20000),
+      family: 4,
+    };
+
+    const maxRetries = Number(process.env.MONGO_CONNECT_RETRIES || 10);
+    const baseDelay = Number(process.env.MONGO_RETRY_BASE_DELAY_MS || 500);
+
+    mongoose.connection.on("connected", () => console.log("+ MongoDB connected +"));
+    mongoose.connection.on("disconnected", () => console.warn("! MongoDB disconnected !"));
+    mongoose.connection.on("error", (err) => console.error("Mongo error:", err?.message || err));
+
+    connecting = (async () => {
+      let lastErr;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          await mongoose.connect(uri, options);
+          mongoose.set("bufferCommands", false);
+          return mongoose.connection;
+        } catch (err) {
+          lastErr = err;
+          const delay = Math.min(10000, baseDelay * 2 ** (attempt - 1));
+          console.error(`Mongo connect failed (${attempt}/${maxRetries}):`, err?.message || err);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
+      throw lastErr;
+    })().finally(() => { connecting = null; });
+
+    return connecting;
+  }
+
+  module.exports = { initialize };
+
+
+================================================================
+STEP 5: .env ME KEYS ADD KARO
+================================================================
+
+Yeh saari keys .env file me paste karo.
+Jo values diye hain woh 20k users ke hisaab se tuned hain.
+Change nahi karoge toh bhi defaults se chal jayega.
+
+----------------------------------------------------------
+# ADMIN SECRET — koi bhi strong random string daalo
+ADMIN_SECRET=change_this_to_any_strong_secret_123
+
+# Cloudflare se nahi aayi request block karo (attack me true karo)
+BLOCK_NON_CLOUDFLARE=false
+
+# DDoS Protection
+DDOS_ENABLED=true
+DDOS_BLOCK_THRESHOLD=60
+DDOS_WARN_THRESHOLD=40
+DDOS_BURST_LIMIT=40
+DDOS_BURST_WINDOW_MS=10000
+DDOS_BLOCK_DURATION_MS=1800000
+DDOS_EXTENDED_BLOCK_MS=43200000
+DDOS_WHITELIST_IPS=127.0.0.1,::1
+
+# Rate Limiting (20k users ke liye tuned)
+RATE_GLOBAL_WINDOW_MS=60000
+RATE_GLOBAL_MAX=200
+RATE_API_WINDOW_MS=60000
+RATE_API_MAX=120
+RATE_SENSITIVE_WINDOW_MS=60000
+RATE_SENSITIVE_MAX=10
+
+# Endpoint Shield (login + balance protection)
+LOGIN_MAX_PER_MINUTE=6
+LOGIN_FAIL_MAX=5
+LOGIN_BLOCK_DURATION_MS=900000
+BALANCE_MAX_PER_MINUTE=30
+FAILED_TOKEN_MAX=10
+FAILED_TOKEN_BLOCK_MS=1800000
+
+# Connection Guard
+DB_MAX_INFLIGHT=800
+CIRCUIT_BREAKER_THRESHOLD=100
+CIRCUIT_BREAKER_COOLDOWN_MS=30000
+REQUEST_TIMEOUT_MS=20000
+
+# MongoDB (20k users ke liye)
+MONGO_MAX_POOL_SIZE=30
+MONGO_MIN_POOL_SIZE=5
+MONGO_WAIT_QUEUE_TIMEOUT_MS=500
+MONGO_SERVER_SELECTION_TIMEOUT_MS=5000
+MONGO_CONNECT_TIMEOUT_MS=5000
+MONGO_SOCKET_TIMEOUT_MS=20000
+MONGO_CONNECT_RETRIES=10
+MONGO_RETRY_BASE_DELAY_MS=500
+
+# Blocked IP History
+MAX_BLOCKED_IP_HISTORY=50000
+
+# Cloudflare Auto-Blocker
+CF_AUTO_BLOCK=false
+CLOUDFLARE_API_TOKEN=
+CLOUDFLARE_ZONE_ID=
+CF_MIN_BLOCK_COUNT=2
+CF_SYNC_INTERVAL_MS=30000
+----------------------------------------------------------
+
+
+================================================================
+STEP 6: CLOUDFLARE SETUP (CF_AUTO_BLOCK enable karne ke liye)
+================================================================
+
+Yeh step tab karo jab auto-block chahiye.
+Nahi chahiye toh CF_AUTO_BLOCK=false rakhne do.
+
+6A. CLOUDFLARE_ZONE_ID lao:
+  1. https://dash.cloudflare.com pe login karo
+  2. Apna DOMAIN click karo
+  3. Overview page → Right side → "Zone ID" copy karo
+
+6B. CLOUDFLARE_API_TOKEN banao:
+  1. https://dash.cloudflare.com/profile/api-tokens
+  2. Create Token → Custom token → Get started
+  3. Token name: "DDoS Auto Blocker"
+  4. Permissions:
+     → Zone | Firewall Services | Edit
+     → Zone | Zone | Read
+  5. Zone Resources:
+     → Include → Specific zone → APNA DOMAIN select karo
+  6. Create Token → Copy karo
+
+6C. .env me paste karo:
+  CF_AUTO_BLOCK=true
+  CLOUDFLARE_API_TOKEN=jo_token_mila_woh
+  CLOUDFLARE_ZONE_ID=jo_zone_id_mila_woh
+
+
+================================================================
+STEP 7: NGINX SETUP (optional — agar nginx use karte ho)
+================================================================
+
+7A. Nginx config copy karo:
+  sudo cp scripts/nginx-ddos.conf /etc/nginx/conf.d/ddos-protection.conf
+  (File me comments padho, uncomment karo apne hisaab se)
+
+7B. Blocked IPs file banao (empty):
+  sudo touch /etc/nginx/conf.d/blocked-ips.conf
+
+7C. Nginx blocker script setup:
+  chmod +x scripts/nginx-ip-blocker.sh
+
+7D. Crontab me add karo (har minute sync):
+  crontab -e
+  * * * * * /path/to/project/scripts/nginx-ip-blocker.sh sync
+  * * * * * sleep 30 && /path/to/project/scripts/nginx-ip-blocker.sh sync
+
+7E. Test karo:
+  sudo nginx -t && sudo nginx -s reload
+
+
+================================================================
+STEP 8: DEPLOY & VERIFY
+================================================================
+
+8A. Server restart karo:
+  pm2 restart all
+
+8B. Health check karo:
+  curl http://localhost:5001/health
+
+8C. DDoS stats dekho:
+  curl http://localhost:5001/admin/ddos-stats?secret=APNA_SECRET
+
+8D. Blocked IP history:
+  curl http://localhost:5001/admin/blocked-ip-history?secret=APNA_SECRET
+
+8E. Cloudflare blocker status:
+  curl http://localhost:5001/admin/cloudflare-blocker/status?secret=APNA_SECRET
+
+
+================================================================
+ATTACK KE TIME KYA KARO (Emergency)
+================================================================
+
+.env me yeh values change karo aur pm2 restart all:
+
+  BLOCK_NON_CLOUDFLARE=true        ← Cloudflare bypass block
+  DDOS_BLOCK_THRESHOLD=40          ← Strict blocking
+  DDOS_BURST_LIMIT=25              ← Burst kam karo
+  RATE_GLOBAL_MAX=120              ← Rate kam karo
+  RATE_API_MAX=60
+  RATE_SENSITIVE_MAX=5
+  LOGIN_MAX_PER_MINUTE=3
+  BALANCE_MAX_PER_MINUTE=15
+  DB_MAX_INFLIGHT=400
+  CF_MIN_BLOCK_COUNT=1             ← Pehli baar me Cloudflare block
+
+
+================================================================
+FILES JO AUTO BANEGI errorLog/ FOLDER ME
+================================================================
+
+  errorLog/
+  ├── blocked-ips-history.json     ← Poori history (IP, country, reason, time)
+  ├── blocked-ips-list.txt         ← Plain IP list (Cloudflare import ke liye)
+  ├── blocked-ips.json             ← Currently blocked IPs
+  ├── cloudflare-block-rules.txt   ← Cloudflare WAF rules (copy-paste)
+  ├── cloudflare-synced-ips.json   ← Cloudflare me push hui IPs
+  └── nginx-blocked-ips.conf       ← Nginx deny rules
+
+
+================================================================
+ADMIN API ENDPOINTS
+================================================================
+
+  GET  /health                                        ← No auth
+  GET  /admin/ddos-stats?secret=X                     ← DDoS + endpoint stats
+  GET  /admin/blocked-ips?secret=X                    ← Currently blocked
+  GET  /admin/blocked-ip-history?secret=X             ← Full history + stats
+  GET  /admin/blocked-ip-history/download?secret=X    ← Download JSON
+  GET  /admin/blocked-ip-list?secret=X                ← Download plain IP list
+  GET  /admin/cloudflare-rules?secret=X               ← Download CF WAF rules
+  GET  /admin/cloudflare-blocker/status?secret=X      ← CF blocker status
+  GET  /admin/cloudflare-blocker/synced-ips?secret=X  ← CF me push hui IPs
+  POST /admin/block-ip         {ip, duration}         ← Manual block
+  POST /admin/unblock-ip       {ip}                   ← Manual unblock
+  POST /admin/cloudflare-blocker/block   {ip, note}   ← Push to Cloudflare
+  POST /admin/cloudflare-blocker/unblock {ip}         ← Remove from Cloudflare
+  POST /admin/cloudflare-blocker/sync-now             ← Force sync now
+
+
+================================================================
+MIDDLEWARE ORDER (app.js me yeh sequence hona chahiye)
+================================================================
+
+  1. cloudflareIPResolver    ← Real IP nikalo
+  2. ddosProtection          ← Behavioral analysis, IP scoring
+  3. advancedRateLimiter     ← Rate limiting
+  4. connectionGuard         ← DB/Redis protection
+  5. helmet, hpp, xss, cors  ← Standard security
+  6. body-parser             ← JSON parse
+  7. securityGuard           ← SQL injection, XSS patterns
+  8. healthRoutes            ← Admin APIs
+  9. API routes              ← Business logic
+  10. Error handlers         ← 404, 500
+
+  loginShield / balanceShield individual routes pe lagte hain,
+  global middleware nahi hain.
+
+
+================================================================
+DONE! Koi issue aaye toh /admin/ddos-stats se debug karo
+================================================================
