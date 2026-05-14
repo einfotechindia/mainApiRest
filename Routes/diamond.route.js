@@ -29,14 +29,45 @@ router.post(
 
 
 router.post(
-  "/getUndeclareBetsListGroupwise",
-  diamondController.getUndeclareBetsListGroupwise
+  "/diamondDepositWithdraw",
+   verifyToken,
+  diamondController.diamondDepositWithdraw
 );
 
 
+router.post(
+  "/diamondSettlement",
+   verifyToken,
+  diamondController.diamondSettlement
+);
 
 
+router.post(
+  "/diamondBalanceSheet",
+   verifyToken,
+  diamondController.diamondBalanceSheet
+);
 
+
+router.post(
+  "/diamondDashboard",
+   verifyToken,
+  diamondController.diamondDashboard
+);
+
+
+router.post(
+  "/diamondAccountStatement",
+   verifyToken,
+  diamondController.diamondAccountStatement
+);
+
+
+// without verification
+router.post(
+  "/getUndeclareBetsListGroupwise",
+  diamondController.getUndeclareBetsListGroupwise
+);
 
 
 module.exports = router;

@@ -994,6 +994,7 @@ const checkExposureClient = async (req, res) => {
     userId = new ObjectId(usernameData.userDetails.userId);
   }
 
+
   let where = await whereHelper(loggedUserData, {
     userId: userId,
     forBet: 1,
@@ -4984,52 +4985,52 @@ const FancyCateogeoryAuditModel = require("../../Models/BetsList/FancyCateogeory
 
 const FANCY_CATEOGEORY_REDIS_KEY = "fancyCateogeory";
 
-// Fix old records + seed default categories
-(async () => {
-  try {
-    await FancyCateogeoryModel.collection.updateMany(
-      { $or: [{ commission: { $type: "number" } }, { commission: { $exists: false } }] },
-      { $set: { commission: "allow" } }
-    );
-    console.log("FancyCateogeory: fixed old commission values to 'allow'");
+// // Fix old records + seed default categories
+// (async () => {
+//   try {
+//     await FancyCateogeoryModel.collection.updateMany(
+//       { $or: [{ commission: { $type: "number" } }, { commission: { $exists: false } }] },
+//       { $set: { commission: "allow" } }
+//     );
+//     console.log("FancyCateogeory: fixed old commission values to 'allow'");
 
-    // Seed default cricket fancy categories if empty
-    let count = await FancyCateogeoryModel.countDocuments();
-    if (count === 0) {
-      let defaults = [
-        { cateogeryName: "Session Runs", cateogeryType: ["session", "cricket"], maximumAmount: 25000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#3b82f6", icon: "cricket", status: true },
-        { cateogeryName: "Over Runs", cateogeryType: ["over", "session", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#10b981", icon: "cricket", status: true },
-        { cateogeryName: "Ball By Ball", cateogeryType: ["ball by ball", "cricket"], maximumAmount: 5000, minimumAmount: 100, betDelay: 0, commission: "allow", permission: "allow", color: "#f59e0b", icon: "cricket", status: true },
-        { cateogeryName: "Player Runs", cateogeryType: ["player", "runs", "cricket"], maximumAmount: 25000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#8b5cf6", icon: "player", status: true },
-        { cateogeryName: "Partnership Runs", cateogeryType: ["partnership", "cricket"], maximumAmount: 20000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#06b6d4", icon: "cricket", status: true },
-        { cateogeryName: "Total Match Runs", cateogeryType: ["match", "runs", "cricket"], maximumAmount: 50000, minimumAmount: 500, betDelay: 3, commission: "allow", permission: "allow", color: "#ef4444", icon: "match", status: true },
-        { cateogeryName: "Lambi Runs", cateogeryType: ["lambi", "runs", "cricket"], maximumAmount: 50000, minimumAmount: 500, betDelay: 3, commission: "allow", permission: "allow", color: "#e11d48", icon: "cricket", status: true },
-        { cateogeryName: "Total Boundaries", cateogeryType: ["boundaries", "cricket"], maximumAmount: 15000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#22c55e", icon: "boundaries", status: true },
-        { cateogeryName: "Total Sixes", cateogeryType: ["boundaries", "sixes", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#a855f7", icon: "boundaries", status: true },
-        { cateogeryName: "Total Fours", cateogeryType: ["boundaries", "fours", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#14b8a6", icon: "boundaries", status: true },
-        { cateogeryName: "Total Wickets", cateogeryType: ["wickets", "cricket"], maximumAmount: 15000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#f97316", icon: "wickets", status: true },
-        { cateogeryName: "Fall Of Wicket", cateogeryType: ["wickets", "fall of wicket", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#ec4899", icon: "wickets", status: true },
-        { cateogeryName: "Total Extras", cateogeryType: ["extras", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#84cc16", icon: "extras", status: true },
-        { cateogeryName: "Total Wides", cateogeryType: ["extras", "wides", "cricket"], maximumAmount: 5000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#0ea5e9", icon: "extras", status: true },
-        { cateogeryName: "Top Batsman", cateogeryType: ["player", "top batsman", "cricket"], maximumAmount: 25000, minimumAmount: 100, betDelay: 3, commission: "allow", permission: "allow", color: "#6366f1", icon: "player", status: true },
-        { cateogeryName: "Top Bowler", cateogeryType: ["player", "top bowler", "cricket"], maximumAmount: 25000, minimumAmount: 100, betDelay: 3, commission: "allow", permission: "allow", color: "#7c3aed", icon: "player", status: true },
-        { cateogeryName: "Player Boundaries", cateogeryType: ["player", "boundaries", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#059669", icon: "player", status: true },
-        { cateogeryName: "Innings Runs", cateogeryType: ["innings", "runs", "cricket"], maximumAmount: 50000, minimumAmount: 500, betDelay: 3, commission: "allow", permission: "allow", color: "#dc2626", icon: "cricket", status: true },
-        { cateogeryName: "Run Rate", cateogeryType: ["run rate", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "disallow", permission: "allow", color: "#d97706", icon: "cricket", status: true },
-        { cateogeryName: "Dot Balls", cateogeryType: ["dot balls", "cricket"], maximumAmount: 5000, minimumAmount: 100, betDelay: 2, commission: "disallow", permission: "allow", color: "#64748b", icon: "cricket", status: true },
-        { cateogeryName: "Highest Over Runs", cateogeryType: ["over", "highest", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#fb923c", icon: "cricket", status: true },
-        { cateogeryName: "Caught Out", cateogeryType: ["wickets", "caught", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#c026d3", icon: "wickets", status: true },
-        { cateogeryName: "Bowled", cateogeryType: ["wickets", "bowled", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#9333ea", icon: "wickets", status: true },
-        { cateogeryName: "LBW", cateogeryType: ["wickets", "lbw", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#4f46e5", icon: "wickets", status: true },
-        { cateogeryName: "Toss Winner", cateogeryType: ["toss", "cricket"], maximumAmount: 50000, minimumAmount: 100, betDelay: 0, commission: "disallow", permission: "allow", color: "#eab308", icon: "match", status: true },
-      ];
-      await FancyCateogeoryModel.insertMany(defaults);
-      console.log("FancyCateogeory: seeded", defaults.length, "default cricket categories");
-    }
-  } catch (e) {
-    console.log("FancyCateogeory migration/seed skip:", e.message);
-  }
-})();
+//     // Seed default cricket fancy categories if empty
+//     let count = await FancyCateogeoryModel.countDocuments();
+//     if (count === 0) {
+//       let defaults = [
+//         { cateogeryName: "Session Runs", cateogeryType: ["session", "cricket"], maximumAmount: 25000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#3b82f6", icon: "cricket", status: true },
+//         { cateogeryName: "Over Runs", cateogeryType: ["over", "session", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#10b981", icon: "cricket", status: true },
+//         { cateogeryName: "Ball By Ball", cateogeryType: ["ball by ball", "cricket"], maximumAmount: 5000, minimumAmount: 100, betDelay: 0, commission: "allow", permission: "allow", color: "#f59e0b", icon: "cricket", status: true },
+//         { cateogeryName: "Player Runs", cateogeryType: ["player", "runs", "cricket"], maximumAmount: 25000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#8b5cf6", icon: "player", status: true },
+//         { cateogeryName: "Partnership Runs", cateogeryType: ["partnership", "cricket"], maximumAmount: 20000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#06b6d4", icon: "cricket", status: true },
+//         { cateogeryName: "Total Match Runs", cateogeryType: ["match", "runs", "cricket"], maximumAmount: 50000, minimumAmount: 500, betDelay: 3, commission: "allow", permission: "allow", color: "#ef4444", icon: "match", status: true },
+//         { cateogeryName: "Lambi Runs", cateogeryType: ["lambi", "runs", "cricket"], maximumAmount: 50000, minimumAmount: 500, betDelay: 3, commission: "allow", permission: "allow", color: "#e11d48", icon: "cricket", status: true },
+//         { cateogeryName: "Total Boundaries", cateogeryType: ["boundaries", "cricket"], maximumAmount: 15000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#22c55e", icon: "boundaries", status: true },
+//         { cateogeryName: "Total Sixes", cateogeryType: ["boundaries", "sixes", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#a855f7", icon: "boundaries", status: true },
+//         { cateogeryName: "Total Fours", cateogeryType: ["boundaries", "fours", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#14b8a6", icon: "boundaries", status: true },
+//         { cateogeryName: "Total Wickets", cateogeryType: ["wickets", "cricket"], maximumAmount: 15000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#f97316", icon: "wickets", status: true },
+//         { cateogeryName: "Fall Of Wicket", cateogeryType: ["wickets", "fall of wicket", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#ec4899", icon: "wickets", status: true },
+//         { cateogeryName: "Total Extras", cateogeryType: ["extras", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#84cc16", icon: "extras", status: true },
+//         { cateogeryName: "Total Wides", cateogeryType: ["extras", "wides", "cricket"], maximumAmount: 5000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#0ea5e9", icon: "extras", status: true },
+//         { cateogeryName: "Top Batsman", cateogeryType: ["player", "top batsman", "cricket"], maximumAmount: 25000, minimumAmount: 100, betDelay: 3, commission: "allow", permission: "allow", color: "#6366f1", icon: "player", status: true },
+//         { cateogeryName: "Top Bowler", cateogeryType: ["player", "top bowler", "cricket"], maximumAmount: 25000, minimumAmount: 100, betDelay: 3, commission: "allow", permission: "allow", color: "#7c3aed", icon: "player", status: true },
+//         { cateogeryName: "Player Boundaries", cateogeryType: ["player", "boundaries", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#059669", icon: "player", status: true },
+//         { cateogeryName: "Innings Runs", cateogeryType: ["innings", "runs", "cricket"], maximumAmount: 50000, minimumAmount: 500, betDelay: 3, commission: "allow", permission: "allow", color: "#dc2626", icon: "cricket", status: true },
+//         { cateogeryName: "Run Rate", cateogeryType: ["run rate", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "disallow", permission: "allow", color: "#d97706", icon: "cricket", status: true },
+//         { cateogeryName: "Dot Balls", cateogeryType: ["dot balls", "cricket"], maximumAmount: 5000, minimumAmount: 100, betDelay: 2, commission: "disallow", permission: "allow", color: "#64748b", icon: "cricket", status: true },
+//         { cateogeryName: "Highest Over Runs", cateogeryType: ["over", "highest", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#fb923c", icon: "cricket", status: true },
+//         { cateogeryName: "Caught Out", cateogeryType: ["wickets", "caught", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#c026d3", icon: "wickets", status: true },
+//         { cateogeryName: "Bowled", cateogeryType: ["wickets", "bowled", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#9333ea", icon: "wickets", status: true },
+//         { cateogeryName: "LBW", cateogeryType: ["wickets", "lbw", "cricket"], maximumAmount: 10000, minimumAmount: 100, betDelay: 2, commission: "allow", permission: "allow", color: "#4f46e5", icon: "wickets", status: true },
+//         { cateogeryName: "Toss Winner", cateogeryType: ["toss", "cricket"], maximumAmount: 50000, minimumAmount: 100, betDelay: 0, commission: "disallow", permission: "allow", color: "#eab308", icon: "match", status: true },
+//       ];
+//       await FancyCateogeoryModel.insertMany(defaults);
+//       console.log("FancyCateogeory: seeded", defaults.length, "default cricket categories");
+//     }
+//   } catch (e) {
+//     console.log("FancyCateogeory migration/seed skip:", e.message);
+//   }
+// })();
 
 const saveFancyCateogeoryInRedis = async () => {
   let allList = await FancyCateogeoryModel.find().sort({ createdAt: -1 });
@@ -5589,6 +5590,25 @@ const validateMultipleFancy = async (req, res) => {
   }
 };
 
+
+const userExposureList = async (req, res) => {
+  const bodyData = req.body;
+  const loggedUserData = req.loggedInUser;
+  const userType = loggedUserData.userType;
+  let where = await whereHelper(loggedUserData, {
+    exposure : { $lt : 0}
+  });
+  let exposerList = await UserModel.find(where, {
+    exposure: 1,
+    username: 1,
+    userId: 1,
+    coins: 1,
+    creatorShareData:1
+  });
+  return SendResponse(res, "success", "", exposerList);
+};
+
+
 module.exports = {
   createDomain,
   DomainList,
@@ -5678,5 +5698,6 @@ module.exports = {
   exportFancyCateogeory,
   importFancyCateogeory,
   getFancyCateogeoryAuditLog,
-  validateMultipleFancy
+  validateMultipleFancy,
+  userExposureList
 };

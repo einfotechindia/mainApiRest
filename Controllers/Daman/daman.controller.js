@@ -422,6 +422,7 @@ const getTrackingActivites = async (req,res)=>{
     parentData:parentData
   }
   
+  
 
   let queryWhere = {
     username : { $in : checkIdUsername },
@@ -436,6 +437,8 @@ const getTrackingActivites = async (req,res)=>{
   let pageNo = bodyData.pageNo ? parseInt(bodyData.pageNo, 10) : 1;
   if (!Number.isFinite(pageNo) || pageNo <= 0) pageNo = 1;
   const skipData = limitData * (pageNo - 1);
+
+
   const totalDocuments = await trackingctivites.countDocuments(queryWhere);
 
   const trackingData = await trackingctivites

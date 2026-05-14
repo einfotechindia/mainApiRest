@@ -769,7 +769,7 @@ async function GetUserCoins(id, userType) {
       $sum: {
         $cond: [
           {
-            $and: [{ $eq: ["$overallType", "depositWithdraw"] }],
+            $and: [{ $eq: ["$overallType", "depositWithdraw"] } , { $eq: ["$isCash", false] } ],
           },
           `$amount`,
           0,

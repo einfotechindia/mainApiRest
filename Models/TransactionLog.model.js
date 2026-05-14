@@ -50,7 +50,6 @@ const TransactionLogSchema = new mongoose.Schema(
     clientId: { type: mongoose.Schema.Types.ObjectId, default: null },
     betId: { type: mongoose.Schema.Types.ObjectId, default: null },
     isCash: { type: Boolean, default: false },
-
     sportId: { type: Number, default: false },
     
     date: {
