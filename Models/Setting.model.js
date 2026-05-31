@@ -331,6 +331,42 @@ const SettingSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    maxProfitBookmaker: {
+      type: Number,
+      default: 10000000,
+    },
+    maxProfitFancy: {
+      type: Number,
+      default: 10000000,
+    },
+    maxProfitBetfairTennis: {
+      type: Number,
+      default: 10000000,
+    },
+    maxProfitBetfairFootball: {
+      type: Number,
+      default: 10000000,
+    },
+    maxProfitBetfairRacing: {
+      type: Number,
+      default: 10000000,
+    },
+    cricketBetAcceptBeforeTimingHour: {
+      type: Number,
+      default: 36,
+    },
+     soccerBetAcceptBeforeTimingHour: {
+      type: Number,
+      default: 36,
+    },
+    tennisBetAcceptBeforeTimingHour: {
+      type: Number,
+      default: 36,
+    },
+    racingBetAcceptBeforeTimingHour: {
+      type: Number,
+      default: 36,
+    },
   },
   {
     timestamps: true,

@@ -645,6 +645,10 @@ const generateDiamondCasinoLedger = async (req, res) => {
 
 
 
+   // _dx("kk")
+
+
+
     var resData = await casinoBet.aggregate([
       {
         $match: where,
@@ -752,11 +756,21 @@ const generateDiamondCasinoLedger = async (req, res) => {
         let userId = data.userId;
         let clientShare = {};
         let parentData = {};
-        if (shareClientData[userId]) {
+
+
+
+       if (shareClientData[userId]) {
           clientShare = shareClientData[userId];
+        } else {
+          _d("share data not found for userId " + userId);
+           continue;
         }
+
         if (clientListData[userId]) {
           clientData = clientListData[userId];
+        } else {
+          _d("client data not found for userId " + userId);
+          continue;
         }
 
         if (clientData.parentData) {
@@ -1513,6 +1527,7 @@ const generateDiamondCasinoLedger = async (req, res) => {
         };
         finalProfitLossPosition.push(profitLoss);
       }
+
 
       await Promise.all([
         ledgerModel.bulkWrite(finalUserLedger),

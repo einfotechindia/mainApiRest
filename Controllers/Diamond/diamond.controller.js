@@ -715,6 +715,7 @@ const diamondDepositWithdraw = async (req, res) => {
         transactionType: "depositWithdrawal",
         remarks: bodyData.remark ? `${bodyData.remark} (${_date_time()})` : userRemarkCrick,
         userId: userData.creatorId,
+        userType: creatorData.userType,
         creatorId: userData.creatorId,
         [creatorData.userType + "Id"]: userData.creatorId,
         [`${creatorData.userType}ProfitLoss`]: creatorCoinsUpdated,
@@ -727,6 +728,7 @@ const diamondDepositWithdraw = async (req, res) => {
         transactionType: "depositWithdrawal",
         remarks: bodyData.remark ? `${bodyData.remark} (${_date_time()})` : creatorRemarkCrick,
         userId: userData.userId,
+        userType: userData.userType,
         creatorId: userData.creatorId,
         [userData.userType + "Id"]: userData.userId,
         [`${userData.userType}ProfitLoss`]: coins,
@@ -857,8 +859,6 @@ const diamondSettlement = async (req, res) => {
     creatorCashCredit = creatorCashCredit[0] ? creatorCashCredit[0] : {}
     
 
-    _d(userCashCredit , "userCashCredit")
-
     let userTotalSettlementAmountByParent= userCashCredit.totalSettlementAmountByParent ? userCashCredit.totalSettlementAmountByParent : 0
     let userTotalProfitLossClientOrSettlement = userCashCredit.totalProfitLossClientOrSettlement ? userCashCredit.totalProfitLossClientOrSettlement : 0
     let totalSettledAmount = userTotalProfitLossClientOrSettlement + userTotalSettlementAmountByParent
@@ -879,14 +879,6 @@ const diamondSettlement = async (req, res) => {
 
     let userCoins = userData?.coins ? userData?.coins : 0 
     let creatorCoins = creatorData?.coins ? creatorData?.coins : 0 
-
-    _d(totalSettledAmount, "totalSettledAmount")
-    _d(totalSettledAmountWithoutSign, "totalSettledAmountWithoutSign")
-
-    _d(updateCoins, "updateCoins")
-    _d(userCoins, "userCoins")
-
-    _d(creatorCoins, "creatorCoins")
 
 
     if (coins < 0) {
@@ -1599,98 +1591,33 @@ const diamondAccountStatement = async (req, res) => {
     let bodyData = req.body;
     const loginData = req.loggedInUser;
     let where = await whereHelper(loginData);
-
     let userType = loginData.userType
-
-    if (bodyData.creatorId) {
-      where = {}
-      where.creatorId = new ObjectId(bodyData.creatorId);
-    }
+    let userId = loginData.userId
 
     if (bodyData.userId) {
-      where = {}
-      where.userId = new ObjectId(bodyData.userId);
+      userId = new ObjectId(bodyData.userId);
     }
 
+    if (bodyData.userType) {
+      userType = bodyData.userType;
+    }
+
+
+    if (bodyData.creatorId) {
+      where.creatorId = new ObjectId(bodyData.creatorId);
+    }
 
     if (bodyData.transactionType) {
       where.transactionType = bodyData.transactionType;
     }
 
-    if (bodyData.showParent && bodyData.showParent == true) {
-      where.creatorId = { $ne: new ObjectId(bodyData.userId) }
-    }
-
-    if (bodyData.showChild && bodyData.showChild == true) {
-      where.creatorId = { $eq: new ObjectId(bodyData.creatorId) }
-      where.userId = { $eq: new ObjectId(bodyData.creatorId) }
-    }
+    where[`${userType}Id`] = userId
 
 
-    if (bodyData.allTrue && bodyData.allTrue == true) {
-      where = {
-        [bodyData.userType + "Id"]: new ObjectId(bodyData.userId),
-        $or: [
-          { transactionType: "profitLoss" },
-          { transactionType: "depositWithdrawal" },
-          { transactionType: "ledger", creatorId: new ObjectId(bodyData.userId) },
-          { transactionType: "ledger", userId: new ObjectId(bodyData.userId) }
-        ]
-      };
-      if (bodyData.userType) {
-        userType = bodyData.userType
-      }
-    }
-
-    if (bodyData.isProfitLoss && bodyData.isProfitLoss == true) {
-      where = {
-        [bodyData.userType + "Id"]: new ObjectId(bodyData.userId),
-        transactionType: "profitLoss"
-      }
-    }
-
-    if (bodyData.isLedger && bodyData.isLedger == true) {
-      where = {
-        transactionType: "ledger",
-        $or: [
-          { creatorId: new ObjectId(bodyData.userId) },
-          { userId: new ObjectId(bodyData.userId) }
-        ]
-      };
-    }
-
-    if (bodyData.isHistory && bodyData.isHistory == true) {
-      where = {
-        [bodyData.userType + "Id"]: new ObjectId(bodyData.userId),
-        $or: [
-          { transactionType: "profitLoss" },
-          { transactionType: "ledger", userId: new ObjectId(bodyData.userId) }
-        ]
-      };
-    }
-
-    if (bodyData.showOnlyChipsClient && bodyData.showOnlyChipsClient == true) {
-      where = {
-        userId: new ObjectId(bodyData.userId),
-        $or: [
-          { transactionType: "depositWithdrawal", userId: new ObjectId(bodyData.userId) },
-        ]
-      };
-
-      userType = bodyData.userType
-
-      if (bodyData.userType && bodyData.userType == "client") { 
-      where = {
-              clientId: new ObjectId(bodyData.userId),
-              $or: [
-                { transactionType: "depositWithdrawal", clientId: new ObjectId(bodyData.userId) },
-              ]
-          };
-
-
-      }
-    }
-
+    let userData = await UserModel.findOne({ userId: userId }, {
+      userId :1 , creatorId :1 , creatorShareData:1
+    })
+   
 
     if (bodyData.fromDate && bodyData.toDate) {
       where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
@@ -1716,11 +1643,90 @@ const diamondAccountStatement = async (req, res) => {
       where.isComm = bodyData.isComm
     }
 
-    if (bodyData.gameName) {
-      where.gameName = bodyData.gameName
+    
+    if (bodyData.gameName && bodyData.gameName == "depositWithdrawalSettlement") {
+        where = {...where , ...{
+            $or: [
+              { transactionType: "depositWithdrawal" },
+              { transactionType: "ledger", creatorId: userId  , userId :userId }, // for downline
+              { transactionType: "ledger", userId: userId  , creatorId : {$ne : userId}} // entry done by upperline
+            ]
+        }
+      }
+    }
+    else {
+          if (bodyData.gameName) {
+          where.gameName = bodyData.gameName
+        }
     }
 
 
+    if (bodyData.sportId) {
+      where.sportId = Number(bodyData.sportId)
+    }
+
+
+    if (bodyData.settlementType && bodyData.settlementType == "parent") {
+        where = {
+            userId: userId,
+            creatorId: { $ne: userId },
+            transactionType : "ledger"
+        }
+    }
+
+    if (bodyData.settlementType && bodyData.settlementType == "child") {
+        where = {
+            transactionType : "ledger",
+            creatorId : { $eq: userId }
+        }
+    }
+
+     if (bodyData.settlementType && bodyData.settlementType == "depositWithdrawal") {
+       where = {
+            [`${userType}Id`] : userId,
+             userId : userId,
+            transactionType : "depositWithdrawal",
+            creatorId : { $eq: userId }
+        }
+     }
+    
+    
+    
+    
+    if (userType == "client") {
+            delete where[`${loginData.userType}Id`]
+            delete where[`${userType}Id`]
+            where.userId  = userId
+            where = {
+              ...where, ...{
+                  $or: [
+                    { transactionType: "depositWithdrawal" },
+                    { transactionType: "profitLoss" },
+                    { transactionType: "ledger", userId: userId, creatorId: { $ne: userId } }
+                  ]
+              }
+            }
+
+            if (bodyData.settlementType && bodyData.settlementType == "parent") {
+                where = {
+                    userId: userId,
+                    creatorId: { $ne: userId },
+                    transactionType : "ledger"
+                }
+            }
+            
+            if (bodyData.settlementType && bodyData.settlementType == "depositWithdrawal") {
+              where = {
+                    userId : userId,
+                    transactionType : "depositWithdrawal",
+                }
+            }
+    }
+    
+    
+    
+    
+    _d(where , "where")
 
 
     let group = {
@@ -1728,7 +1734,7 @@ const diamondAccountStatement = async (req, res) => {
         remarks: `$remarks`,
         marketId: `$marketId`,
       },
-      userAmount: { $sum: `$${userType}ProfitLoss` },
+      userAmount: { $sum: `$amount` },
       amount: { $sum: `$amount` },
       marketId: { $first: `$marketId` },
       transactionType: { $first: `$transactionType` },
@@ -1748,30 +1754,8 @@ const diamondAccountStatement = async (req, res) => {
     }
 
 
-    if (bodyData.isHistory && bodyData.isHistory == true) {
-      group.userAmount = { $sum: `$${bodyData.userType}LedgerAmount` }
-    }
 
-
-
-    if (bodyData.userType && bodyData.userType == "client") {
-      group.userAmount = { $sum: `$amount` }
-    }
-
-
-
-    if (bodyData.isBpexch) {
-      delete where.userId
-      group.userAmount = { $sum: `$${bodyData.userType}LedgerAmount` }
-      where[`${bodyData.userType}Id`] = new ObjectId(bodyData.userId)
-    }
-
-    if (bodyData.isBpexch && bodyData.userType == "client") {
-      group.userAmount = { $sum: `$amount` }
-    }
-
-
-
+  
     if (bodyData.userType == "client") {
       group._id =  {
         remarks: `$remarks`,
@@ -1781,14 +1765,18 @@ const diamondAccountStatement = async (req, res) => {
     }
 
 
+
+   // _d(group , "group")
+
+
     let resData = await crickTransaction.aggregate([
-      {
-        $match: where,
-      },
-      {
-        $group: group,
-      },
-      { $sort: { createdAt : 1 } }
+        {
+          $match: where,
+        },
+        {
+          $group: group,
+        },
+        { $sort: { createdAt : 1 } }
     ]);
 
 
@@ -1798,16 +1786,15 @@ const diamondAccountStatement = async (req, res) => {
     //   resData = JSON.parse(JSON.stringify(resData))
     // }
 
-
-    resData.map((data, key) => {
-      if ((bodyData.userType == "client" && data.transactionType == "ledger")) {
-        resData[key].userAmount = -1 * data.userAmount
-      }
+    // resData.map((data, key) => {
+    //   if ((bodyData.userType == "client" && data.transactionType == "ledger")) {
+    //     resData[key].userAmount = -1 * data.userAmount
+    //   }
       
-      if ((bodyData.userType != "client" && data.transactionType == "profitLoss")) {
-        resData[key].userAmount = data.userAmount
-      }
-    })
+    //   if ((bodyData.userType != "client" && data.transactionType == "profitLoss")) {
+    //     resData[key].userAmount = data.userAmount
+    //   }
+    // })
 
 
         let skipUserAmount = { $sum: `$amount` }
@@ -1844,8 +1831,6 @@ const diamondAccountStatement = async (req, res) => {
           const openingBalance = openingBalanceData?.totalSkipped || 0;
 
      
-
-
     return SendResponse(
       res,
       "success",

@@ -461,12 +461,11 @@ const casinoBetPlace = async (req, res) => {
       remarks: `${casinoType} (${eventId}) bet  for roundId ${roundId} for ${nation} `,
     };
 
-
-   // _dx(logData)
-
+    insertBet = await parentDataAppend(clientData, insertBet);
+    let casinoBetData = await casinoBetModel.create(insertBet);
+    logData.betId = casinoBetData._id;
     await insertTransactionLogCasino(clientData, logData, shareData);
     const updateCoins = await updateCoinsTbl(userId, clientData.userType);
-
 
     if(updateCoins.totalCoins < 0 ){
         let logData = {
@@ -492,7 +491,10 @@ const casinoBetPlace = async (req, res) => {
         });
 
         await insertTransactionLogCasino(clientData, logData, shareData);
-        const updateCoinsAgain = await updateCoinsTbl(userId, clientData.userType)
+      const updateCoinsAgain = await updateCoinsTbl(userId, clientData.userType);
+      await casinoBetModel.deleteOne({
+        _id: casinoBetData._id,
+      });
        return SendResponse(
         res,
         "error",
@@ -503,8 +505,6 @@ const casinoBetPlace = async (req, res) => {
     }
 
 
-    insertBet = await parentDataAppend(clientData, insertBet);
-    await casinoBetModel.create(insertBet);
     const timestamp = Date.now();
     await client.set(`lastBetTimeUser__${userId}`, timestamp);
 

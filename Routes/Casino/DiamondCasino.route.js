@@ -182,9 +182,19 @@ router.post(
 
 
 router.post(
-  "/saveResultRedisVirtual", verifyToken,
+  "/saveResultRedisVirtual",
+   verifyToken,
   isOwnerAndStaff,
   diamondResultController.saveResultRedisVirtual
+);
+
+
+
+router.post(
+ "/newGenerateDiamondLedger",
+  verifyToken,
+  isOwnerAndStaff,
+  diamondResultController.newGenerateDiamondLedger
 );
 
 

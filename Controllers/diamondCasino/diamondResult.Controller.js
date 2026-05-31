@@ -75,7 +75,7 @@ const showResultConvert = async (resultData, casinoType) => {
       returnResult = "";
     }
   }
-  
+
 
   if (
     resultData.gtype == "lucky7eu" ||
@@ -379,7 +379,7 @@ const saveResult = async (req, res) => {
 
     // _d(undeclaredRoundIdArray)
 
-    // _d(isVankyResult , "isVankyResult")
+   //  _d(isVankyResult , "isVankyResult")
 
 
     let declaredRoundList = await fetchRoundWiseResultAndSave(
@@ -510,7 +510,7 @@ const betsResultOfClient = async (req, res) => {
 
         let creditAmount = await selectionResult(data);
 
-        _d(creditAmount, "creditAmount")
+       // _d(creditAmount, "creditAmount")
 
         const pushTransaction = {
           betId: betId,
@@ -830,6 +830,8 @@ const betsResultOfClient = async (req, res) => {
     if (res) {
       return SendResponse(res, "error", "Internal Server Error", error);
     }
+  } finally {
+    await client.del(`redisBetsResultOfClient`);
   }
 };
 
@@ -1185,33 +1187,18 @@ function capitalizeEachWord(str) {
 const generateDiamondLedger = async (req, res) => {
   try {
     let insertCommPerBet = false;
-    // let settingData = await getSettingData()
-    // if (settingData && settingData.diamondCasioPerBet) {
-    //   insertCommPerBet = settingData.diamondCasioPerBet
-    // }
-
     if (process.env.INSTANT_INSERT_DIAMOND_CASINO_COMM_PER_BET == "true") {
       insertCommPerBet = true;
     }
-
-
     let bodyData = {};
     let showDate = _date();
     let todayDate = moment().startOf("day").valueOf();
-
-
     if (req && req?.body && req?.body?.date) {
       bodyData = req.body;
       showDate = await _date(bodyData?.date);
       todayDate = moment(bodyData?.date).startOf("day").valueOf();
     }
 
-
-
-    // _d(bodyData, showDate)
-    // _d(todayDate, "showDate")
-    
-    // _dx("pp")
     if (process.env.INSTANT_INSERT_DIAMOND_CASINO_COMM_PER_BET == "true") {
       await saveCasinoInSportsList(bodyData?.date);
       let dateWiseDiamondCasinoLedger = await DiamondCasinoService.generateDiamondCasinoLedger(req, res);
@@ -1228,12 +1215,9 @@ const generateDiamondLedger = async (req, res) => {
 
     let casinoList = await DiamondCasinoService.getDiamondCasinoData();
 
-
     casinoList = await convertKeyObject(casinoList.data, "eventId");
 
-    let dateWhere = await dateWhereCond(bodyData?.date , bodyData?.date);
-
-
+    let dateWhere = await dateWhereCond(bodyData?.date, bodyData?.date);
 
 
     let where = {
@@ -1243,7 +1227,6 @@ const generateDiamondLedger = async (req, res) => {
         $in: [true, 1],
       },
     };
-
 
     var resData = await TransactionLogModel.aggregate([
       {
@@ -1432,7 +1415,7 @@ const generateDiamondLedger = async (req, res) => {
 
     let clientCommTransaction = [];
     let clientCommStatement = [];
-    let clientPos = [];
+    let clientPosArray = [];
 
     resData.map((data, key) => {
       let agentId = data.agentId;
@@ -1448,21 +1431,15 @@ const generateDiamondLedger = async (req, res) => {
 
       let clientShare = {};
       let clientData = {};
-
       let parentData = {};
 
       if (shareClientData[userId]) {
         clientShare = shareClientData[userId];
-      } else {
-        return true
       }
-
-
 
       if (clientListData[userId]) {
         clientData = clientListData[userId];
       }
-
 
       if (clientData.parentData) {
         parentData = clientData.parentData;
@@ -1479,9 +1456,6 @@ const generateDiamondLedger = async (req, res) => {
       const ownerComm = clientShare?.ownerCasinoCommission;
 
       let clientProfitLoss = data.amount;
-
-      // _d(insertCommPerBet);
-      // _dx(data);
 
       let clientCommAmt = data.clientComm ? data.clientComm : 0;
       let agentCommAmt = 0;
@@ -1842,7 +1816,9 @@ const generateDiamondLedger = async (req, res) => {
         date: todayDate,
       };
 
-      clientPos.push(clientPosPushData);
+
+      //_d(clientPosPushData , "clientPosPushData")
+      clientPosArray.push(clientPosPushData);
 
       let casinoData = casinoList[data.eventId];
       if (casinoData) {
@@ -1877,6 +1853,8 @@ const generateDiamondLedger = async (req, res) => {
 
 
 
+    //  _dx(clientPosArray , "clientPosArray")
+
 
     await Promise.all([
       profitLossPosition.deleteMany({
@@ -1902,8 +1880,12 @@ const generateDiamondLedger = async (req, res) => {
       }),
     ])
 
+
+
+
+
     await Promise.all([
-      profitLossPosition.create(clientPos),
+      profitLossPosition.create(clientPosArray),
       ledgerModel.create(allData),
       TransactionLogModel.create(clientCommTransaction),
       StatementModel.create(clientCommStatement),
@@ -1932,12 +1914,13 @@ const generateDiamondLedger = async (req, res) => {
   }
 };
 
+
 const generateUserDiamondLedger = async (showDate, bodyData) => {
   let findUserIdArray = [];
   let insertLedger = [];
   let keyUserIdArray = {};
 
-  let dateWhere = await dateWhereCond(bodyData?.date , bodyData?.date);
+  let dateWhere = await dateWhereCond(bodyData?.date, bodyData?.date);
 
   let todayDate = moment().startOf("day").valueOf();
 
@@ -2929,9 +2912,14 @@ const deleteDiamondCasinoBets = async (req, res) => {
     deletedStatus = bodyData.isDeleted;
   }
 
+
+  //_dx(deletedStatus , "deletedStatus")
   const response = await deleteBets(bodyData._id, deletedStatus);
+
+
   return SendResponse(res, response.status, response.message, response.data);
 };
+
 
 const deleteBets = async (betsIdArray, deletedStatus) => {
   let uniqueClientData = [];
@@ -2958,39 +2946,33 @@ const deleteBets = async (betsIdArray, deletedStatus) => {
     return returnResponse(res, "error", "no bets found");
   }
 
-
-  let betsIdArrayDelete = []
   betsData.map(async (data) => {
     let pushData = {
       userId: data.clientId,
     };
     clientData.push(pushData);
-    betsIdArrayDelete.push(data._id)
-  });
 
+    let deleteWhere = {
+      userType: "client",
+      marketId: data.roundId + "",
+      eventId: data.eventId + "",
+      userId: data.clientId,
+      overallType: "diamondCasino",
+    };
 
-  let statementWhere = {
+    await TransactionLogModel.deleteMany(deleteWhere);
+
+    let statementWhere = {
       userType: "client",
       gameType: "diamondCasino",
       sportsType: "casino",
       statementFor: "diamondCasino",
-      betId : {$in : betsIdArrayDelete}
-  };
+      marketId: data.marketId,
+      eventId: data.eventId,
+    };
 
-
-   let deleteWhere = {
-      userType: "client",
-      overallType: "diamondCasino",
-      betId : {$in : betsIdArrayDelete}
-   };
-  
-  
- let [statementDeleteData , transactionDeleteData] =  await Promise.all([
-    StatementModel.deleteMany(statementWhere),
-    TransactionLogModel.deleteMany(deleteWhere)
-  ])
-  
-
+    await StatementModel.deleteMany(statementWhere);
+  });
 
   let updateBetsObj = {
     isDeleted: deletedStatus,
@@ -2998,8 +2980,8 @@ const deleteBets = async (betsIdArray, deletedStatus) => {
   };
 
   if (deletedStatus == false) {
-      updateBetsObj.deletedRemark = "rollback by admin";
-      updateBetsObj.isDeclare = 0;
+    updateBetsObj.deletedRemark = "rollback by admin";
+    updateBetsObj.isDeclare = 0;
   }
 
   await casinoBetModel.updateMany(
@@ -3027,6 +3009,7 @@ const deleteBets = async (betsIdArray, deletedStatus) => {
   return returnResponse("success", "bets updated successfully", ResponseMapper);
 };
 
+
 const generateClientProfitLoss = async (req, res) => {
   let bodyData = {};
   let showDate = _date();
@@ -3036,7 +3019,7 @@ const generateClientProfitLoss = async (req, res) => {
     showDate = await _date(bodyData.date);
     todayDate = moment(bodyData.date).startOf("day").valueOf();
   }
-  let dateWhere = await dateWhereCond(bodyData?.date , bodyData?.date);
+  let dateWhere = await dateWhereCond(bodyData?.date, bodyData?.date);
   let casinoType = "internationalCasino";
   if (bodyData.casinoType) {
     casinoType = bodyData.casinoType;
@@ -3349,46 +3332,46 @@ const saveAvaitorResults = async (req, res) => {
       req?.body?.roundIdArray?.length > 0
         ? req.body.roundIdArray
         : await client.smembers("avaitorRoundId");
-    
-    
-  
-    
-       if (bodyData.isDatabase) {
-          let undeclaredRound = await casinoBetModel.aggregate([
-            {
-              $match: {
-                isDeclare: 0,
-                isPartiallyDeclare: 0,
-                isDeleted: false,
-                eventId : 303031
-              },
-            },
-            {
-              $group: {
-                _id: "$roundId",
-              },
-            },
-            {
-              $project: {
-                _id: 1,
-                casinoType: 1,
-              },
-            },
-            {
-              $sort: {
-                _id: 1,
-              },
-            },
-          ]);
-          let undeclaredRoundIdArray = [];
-          undeclaredRound.map((data) => {
-            undeclareAvaitorRoundId.push(data._id);
-          });
+
+
+
+
+    if (bodyData.isDatabase) {
+      let undeclaredRound = await casinoBetModel.aggregate([
+        {
+          $match: {
+            isDeclare: 0,
+            isPartiallyDeclare: 0,
+            isDeleted: false,
+            eventId: 303031
+          },
+        },
+        {
+          $group: {
+            _id: "$roundId",
+          },
+        },
+        {
+          $project: {
+            _id: 1,
+            casinoType: 1,
+          },
+        },
+        {
+          $sort: {
+            _id: 1,
+          },
+        },
+      ]);
+      let undeclaredRoundIdArray = [];
+      undeclaredRound.map((data) => {
+        undeclareAvaitorRoundId.push(data._id);
+      });
     }
 
 
-   //_d(undeclareAvaitorRoundId)
-    
+    //_d(undeclareAvaitorRoundId)
+
 
 
     if (!undeclareAvaitorRoundId?.length) {
@@ -3480,7 +3463,7 @@ const saveAvaitorResults = async (req, res) => {
       };
 
       if (directShareData) {
-          for (const share of directShareData) {
+        for (const share of directShareData) {
           transaction[`${share.creatorUserType}LedgerAmount`] =
             (share[`${share.creatorUserType}LedgerCasinoShare`] * lossAmount) / 100;
           transaction[`${share.creatorUserType}ProfitLoss`] =
@@ -3507,7 +3490,7 @@ const saveAvaitorResults = async (req, res) => {
       redisCleanupSet.add(bet.roundId);
     }
 
-    
+
     /* ---------------- EXECUTE DB OPS IN PARALLEL ---------------- */
     await Promise.allSettled([
       transactionLogs.length && crickTransactionLog.insertMany(transactionLogs),
@@ -3935,72 +3918,70 @@ const saveCasinoLedgerByDateByCrickTransaction = async (req, res) => {
 };
 
 
-const saveResultRedisVirtual = async (req, res) => {
-  try {
-    const undeclaredRoundIdArray = await client.smembers(
-      `virtualUndeclaredRoundId`
-    );
+// const saveResultRedisVirtual = async (req, res) => {
+//   try {
+//     const undeclaredRoundIdArray = await client.smembers(
+//       `virtualUndeclaredRoundId`
+//     );
 
-    if (!undeclaredRoundIdArray || undeclaredRoundIdArray.length === 0) {
-      return SendResponse(
-        res,
-        "success",
-        "No undeclared roundIds found"
-      );
-    }
+//     if (!undeclaredRoundIdArray || undeclaredRoundIdArray.length === 0) {
+//       return SendResponse(
+//         res,
+//         "success",
+//         "No undeclared roundIds found"
+//       );
+//     }
 
-    _d(undeclaredRoundIdArray, "undeclaredRoundIdArray")
-    const resultUrl = casinoFetchUrl.virtualCasinoResult;
+//     const resultUrl = casinoFetchUrl.virtualCasinoResult;
 
-    _d(resultUrl, "")
-    const promises = undeclaredRoundIdArray.map(async (roundId) => {
-      try {
-        const resultData = await axios.post(resultUrl, { roundId: roundId });
-        if (!resultData?.data?.data) {
-          throw new Error(`Invalid response for roundId: ${roundId}`);
-        }
+//     const promises = undeclaredRoundIdArray.map(async (roundId) => {
+//       try {
+//         const resultData = await axios.post(resultUrl, { roundId: roundId });
+//         if (!resultData?.data?.data) {
+//           throw new Error(`Invalid response for roundId: ${roundId}`);
+//         }
 
-        const result = resultData.data.data;
-        if (result.result) {
-          await saveVirtualCasinoResult(
-            roundId,
-            result
-          );
-          return { roundId, status: "fulfilled" };
-        }
-        return { roundId, status: "partiallyResulted" };
-      } catch (err) {
-        _d(`Error in roundId ${roundId}`, err.message);
-        return { roundId, status: "rejected", error: err.message };
-      }
-    });
-    const results = await Promise.allSettled(promises);
-    const success = results.filter(r => r.status === "fulfilled").length;
-    const failed = results.filter(r => r.status === "rejected").length;
-    // _d(`Total: ${results.length}, Success: ${success}, Failed: ${failed}`);
+//         const result = resultData.data.data;
+//         if (result.result) {
+//           await saveVirtualCasinoResult(
+//             roundId,
+//             result
+//           );
+//           return { roundId, status: "fulfilled" };
+//         }
+//         return { roundId, status: "partiallyResulted" };
+//       } catch (err) {
+//         _d(`Error in roundId ${roundId}`, err.message);
+//         return { roundId, status: "rejected", error: err.message };
+//       }
+//     });
+//     const results = await Promise.allSettled(promises);
+//     const success = results.filter(r => r.status === "fulfilled").length;
+//     const failed = results.filter(r => r.status === "rejected").length;
+//     // _d(`Total: ${results.length}, Success: ${success}, Failed: ${failed}`);
 
 
-    return res ? SendResponse(
-      res,
-      "success",
-      "Result processing completed",
-      {
-        total: results.length,
-        success,
-        failed
-      }
-    ) : null;
+//     return res ? SendResponse(
+//       res,
+//       "success",
+//       "Result processing completed",
+//       {
+//         total: results.length,
+//         success,
+//         failed
+//       }
+//     ) : null;
 
-  } catch (error) {
-    _d("Outer Error:", error);
-    return res ? SendResponse(
-      res,
-      "error",
-      "Something went wrong",
-      error.message
-    ) : null;
-  }
-};
+//   } catch (error) {
+//     _d("Outer Error:", error);
+//     return res ? SendResponse(
+//       res,
+//       "error",
+//       "Something went wrong",
+//       error.message
+//     ) : null;
+//   }
+// };
 
 
 
@@ -4041,6 +4022,757 @@ const saveVirtualCasinoResult = async (roundId, result) => {
 };
 
 
+const newGenerateDiamondLedger = async (req, res) => {
+  try {
+    let insertCommPerBet = false;
+    if (process.env.INSTANT_INSERT_DIAMOND_CASINO_COMM_PER_BET == "true") {
+      insertCommPerBet = true;
+    }
+    let bodyData = {};
+    let showDate = _date();
+    let todayDate = moment().startOf("day").valueOf();
+    if (req && req?.body && req?.body?.date) {
+      bodyData = req.body;
+      showDate = await _date(bodyData?.date);
+      todayDate = moment(bodyData?.date).startOf("day").valueOf();
+    }
+
+    let casinoList = await DiamondCasinoService.getDiamondCasinoData();
+    casinoList = await convertKeyObject(casinoList.data, "eventId");
+
+
+    let dateWhere = await dateWhereCond(bodyData?.date, bodyData?.date);
+
+    let where = {
+      overallType: "diamondCasino",
+      date: dateWhere,
+      isDeclare: {
+        $in: [true, 1],
+      },
+    };
+
+
+    let resDataBetList = await casinoBetModel.aggregate([
+      {
+        $match: {
+          date: dateWhere,
+          isDeclare: { $in: [true, 1] },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            eventId: "$eventId",
+            userId: "$userId",
+          },
+          amount: { $sum: "$profitLoss" },
+          userInfo: { $first: "$userInfo" },
+        },
+      },
+    ]);
+
+
+
+    let allData = [];
+    let clientArray = [];
+    let clientIdArray = [];
+
+    resDataBetList.map((data, key) => {
+      let clientId = data._id.userId;
+      let hasKey = clientArray.hasOwnProperty(clientId);
+      if (!hasKey) {
+        clientArray[clientId] = clientId;
+        clientIdArray.push(clientId);
+      }
+    });
+
+   
+    let [clientListData, shareClientData , directShareData] = await Promise.all([
+      UserModel.find(
+        { userId: { $in: clientIdArray } },
+        { parentData: 1, userId: 1, username: 1, name: 1 , agentId : 1, masterId : 1, superagentId : 1, subadminId : 1, adminId : 1, ownerId : 1, superadminId : 1 , subownerId :1 }
+      ),
+      ShareModel.find({
+        userId: { $in: clientIdArray },
+      }),
+      directUserShareModel.find({
+        userId: { $in: clientIdArray },
+      }),
+    ]);
+
+
+    if (shareClientData.length > 0) {
+      shareClientData = await convertKeyObject(shareClientData, "userId");
+    }
+
+    if (clientListData.length > 0) {
+      clientListData = await convertKeyObject(clientListData, "userId");
+    }
+
+
+    if (directShareData.length > 0) {
+      directShareData = await convertKeyObject(directShareData, "userId");
+    }
+
+    let clientCommTransaction = [];
+    let clientCommStatement = [];
+    let clientPosArray = [];
+
+    resDataBetList.map((data, key) => {
+      data.eventId = data._id.eventId;
+      let clientId = data?._id?.userId;
+      let userId = data?._id?.userId;
+      let clientShare = {};
+      let clientData = {};
+      let parentData = {};
+      let clientShareDirect = {};
+
+      if (shareClientData[userId]) {
+        clientShare = shareClientData[userId];
+      } else {
+        console.log(
+          "Share data not found",
+          userId,
+          data.username
+        );
+        return true;
+      }
+
+
+      if (directShareData[userId]) {
+        clientShareDirect = directShareData[userId]?.shareData;
+      } else {
+        console.log(
+          "Share data not found",
+          userId,
+          data.username
+        );
+        return true;
+      }
+
+      if (clientListData[userId]) {
+        clientData = clientListData[userId];
+      }
+
+      if (clientData.parentData) {
+        parentData = clientData.parentData;
+      }
+
+
+
+      let agentId = clientData.agentId;
+      let superagentId = clientData.superagentId;
+      let masterId = clientData.masterId;
+      let subadminId = clientData.subadminId;
+      let adminId = clientData.adminId;
+      let superadminId = clientData.superadminId;
+      let subownerId = clientData.subownerId;
+      let ownerId = clientData.ownerId;
+
+
+      //   _dx(adminId , "adminId")
+   
+      const clientComm = clientShare?.clientCasinoCommission;
+      const agentComm = clientShare?.agentCasinoCommission;
+      const superagentComm = clientShare?.superagentCasinoCommission;
+      const masterComm = clientShare?.masterCasinoCommission;
+      const subadminComm = clientShare?.subadminCasinoCommission;
+      const adminComm = clientShare?.adminCasinoCommission;
+      const superadminComm = clientShare?.superadminCasinoCommission;
+      const subownerComm = clientShare?.subownerCasinoCommission;
+      const ownerComm = clientShare?.ownerCasinoCommission;
+
+      let clientProfitLoss = data.amount;
+
+
+      let clientCommAmt = data.clientComm ? data.clientComm : 0;
+      let agentCommAmt = 0;
+      let superagentCommAmt = 0;
+      let masterCommAmt = 0;
+      let subadminCommAmt = 0;
+      let adminCommAmt = 0;
+      let superadminCommAmt = 0;
+      let subownerCommAmt = 0;
+
+      let agentCommAmtTotal = 0;
+      let superagentCommAmtTotal = 0;
+      let masterCommAmtTotal = 0;
+      let subadminCommAmtTotal = 0;
+      let adminCommAmtTotal = 0;
+      let superadminCommAmtTotal = 0;
+      let subownerCommAmtTotal = 0;
+
+      let agentLedgerAmt = 0;
+      let superagentLedgerAmt = 0;
+      let masterLedgerAmt = 0;
+      let subadminLedgerAmt = 0;
+      let adminLedgerAmt = 0;
+      let superadminLedgerAmt = 0;
+      let subownerLedgerAmt = 0;
+
+      let agentNetProfitLoss = 0;
+      let superagentNetProfitLoss = 0;
+      let masterNetProfitLoss = 0;
+      let subadminNetProfitLoss = 0;
+      let adminNetProfitLoss = 0;
+      let superadminNetProfitLoss = 0;
+      let subownerNetProfitLoss = 0;
+      let ownerNetProfitLoss = 0;
+
+      if (clientProfitLoss < 0 && insertCommPerBet == false) {
+        let userClientProfitLoss = -1 * clientProfitLoss;
+
+        clientCommAmt = (userClientProfitLoss * clientComm) / 100;
+
+        agentCommAmtTotal = (userClientProfitLoss * agentComm) / 100;
+        agentCommAmt =
+          (((100 - clientShare.agentCasinoShare) / 100) *
+            (userClientProfitLoss * agentComm)) /
+          100;
+
+        superagentCommAmtTotal = (userClientProfitLoss * superagentComm) / 100;
+        superagentCommAmt =
+          (((100 - clientShare.superagentCasinoShare) / 100) *
+            (userClientProfitLoss * superagentComm)) /
+          100;
+
+        masterCommAmtTotal = (userClientProfitLoss * masterComm) / 100;
+        masterCommAmt =
+          (((100 - clientShare.masterCasinoShare) / 100) *
+            (userClientProfitLoss * masterComm)) /
+          100;
+
+        subadminCommAmtTotal = (userClientProfitLoss * subadminComm) / 100;
+        subadminCommAmt =
+          (((100 - clientShare.subadminCasinoShare) / 100) *
+            (userClientProfitLoss * subadminComm)) /
+          100;
+
+        adminCommAmtTotal = (userClientProfitLoss * adminComm) / 100;
+        adminCommAmt =
+          (((100 - clientShare.adminCasinoShare) / 100) *
+            (userClientProfitLoss * adminComm)) /
+          100;
+
+        superadminCommAmtTotal = (userClientProfitLoss * superadminComm) / 100;
+        superadminCommAmt =
+          (((100 - clientShare.superadminCasinoShare) / 100) *
+            (userClientProfitLoss * superadminComm)) /
+          100;
+
+        subownerCommAmtTotal = (userClientProfitLoss * subownerComm) / 100;
+        subownerCommAmt =
+          (((100 - clientShare.subownerCasinoShare) / 100) *
+            (userClientProfitLoss * subownerComm)) /
+          100;
+
+
+
+        let pushCommTransaction = {
+          userId: userId,
+          clientId: clientId,
+          agentId: agentId,
+          superagentId: superagentId,
+          masterId: masterId,
+          adminId: adminId,
+          subadminId: subadminId,
+          adminId: adminId,
+          superadminId: superadminId,
+          subownerId: subownerId,
+          ownerId: ownerId,
+          userType: "client",
+          amount: clientCommAmt,
+          clientAmount: clientCommAmt,
+          agentAmount: agentCommAmt,
+          superagentAmount: superagentCommAmt,
+          masterAmount: masterCommAmt,
+          subadminAmount: subadminCommAmt,
+          adminAmount: adminCommAmt,
+          superadminAmount: superadminCommAmt,
+          subownerAmount: subownerCommAmt,
+          date: todayDate,
+          eventId: data.eventId,
+          marketId: data.eventId,
+          gameType: data.casinoName,
+          isComm: 1,
+          forBet: 1,
+          isDeclare: 1,
+          overallType: "diamondCasinoComm",
+          remarks: `diamond casino comm credit for ${data.casinoName} (${showDate})`,
+        };
+
+        clientCommTransaction.push(pushCommTransaction);
+
+
+        if (clientCommAmt > 0) {
+          let pushCommStatement = {
+            userId: userId,
+            userType: "client",
+            amount: clientCommAmt,
+            date: todayDate,
+            eventId: data.eventId,
+            marketId: data.eventId,
+            isComm: 1,
+            statementFor: "diamondCasinoComm",
+            gameType: "diamondCasino",
+            sportsType: `casino`,
+            remark: `diamond casino comm credit for ${data.casinoName} (${showDate})`,
+            userRemark: `diamond casino comm credit for ${data.casinoName} (${showDate})`,
+          };
+          clientCommStatement.push(pushCommStatement);
+        }
+      }
+
+      if (insertCommPerBet == true) {
+        agentCommAmtTotal = data.agentComm ? data.agentComm : 0;
+        superagentCommAmtTotal = data.superagentComm ? data.superagentComm : 0;
+        masterCommAmtTotal = data.masterComm ? data.masterComm : 0;
+        subadminCommAmtTotal = data.subadminComm ? data.subadminComm : 0;
+        adminCommAmtTotal = data.adminComm ? data.adminComm : 0;
+        superadminCommAmtTotal = data.superadminComm ? data.superadminComm : 0;
+        subownerCommAmtTotal = data.subownerComm ? data.subownerComm : 0;
+
+        agentCommAmt =
+          ((100 - clientShare.agentCasinoShare) / 100) * data.agentComm;
+
+        superagentCommAmt =
+          ((100 - clientShare.superagentCasinoShare) / 100) *
+          data.superagentComm;
+        masterCommAmt =
+          ((100 - clientShare.masterCasinoShare) / 100) * data.masterComm;
+
+        subadminCommAmt =
+          ((100 - clientShare.subadminCasinoShare) / 100) * data.subadminComm;
+        adminCommAmt =
+          ((100 - clientShare.adminCasinoShare) / 100) * data.adminComm;
+        superadminCommAmt =
+          ((100 - clientShare.superadminCasinoShare) / 100) *
+          data.superadminComm;
+        subownerCommAmt =
+          ((100 - clientShare.subownerCasinoShare) / 100) * data.subownerComm;
+      }
+
+      agentLedgerAmt =
+        (clientProfitLoss * (100 - clientShare.agentCasinoShare)) / 100 -
+        agentCommAmt;
+
+      superagentLedgerAmt =
+        (clientProfitLoss * (100 - clientShare.superagentCasinoShare)) / 100 -
+        superagentCommAmt;
+
+      masterLedgerAmt =
+        (clientProfitLoss * (100 - clientShare.masterCasinoShare)) / 100 -
+        masterCommAmt;
+
+      subadminLedgerAmt =
+        (clientProfitLoss * (100 - clientShare.subadminCasinoShare)) / 100 -
+        subadminCommAmt;
+
+      adminLedgerAmt =
+        (clientProfitLoss * (100 - clientShare.adminCasinoShare)) / 100 -
+        adminCommAmt;
+
+      superadminLedgerAmt =
+        (clientProfitLoss * (100 - clientShare.superadminCasinoShare)) / 100 -
+        superadminCommAmt;
+
+      subownerLedgerAmt =
+        (clientProfitLoss * (100 - clientShare.subownerCasinoShare)) / 100 -
+        subownerCommAmt;
+
+      let agentProfitLossShare = clientShare.agentCasinoShare;
+
+      let superagentProfitLossShare =
+        clientShare.superagentCasinoShare - clientShare.agentCasinoShare;
+
+      let masterProfitLossShare =
+        clientShare.masterCasinoShare - clientShare.superagentCasinoShare;
+
+      let subadminProfitLossShare =
+        clientShare.subadminCasinoShare - clientShare.masterCasinoShare;
+
+      let adminProfitLossShare =
+        clientShare.adminCasinoShare - clientShare.subadminCasinoShare;
+
+      let superadminProfitLossShare =
+        clientShare.superadminCasinoShare - clientShare.adminCasinoShare;
+
+      let subownerProfitLossShare =
+        clientShare.subownerCasinoShare - clientShare.superadminCasinoShare;
+
+      let ownerProfitLossShare =
+        clientShare.ownerCasinoShare - clientShare.subownerCasinoShare;
+
+      let agentNetProfitLossSelf =
+        (-1 * (clientProfitLoss * agentProfitLossShare)) / 100 +
+        ((100 - clientShare.agentCasinoShare) / 100) * clientCommAmt;
+
+      agentNetProfitLoss =
+        (clientProfitLoss * agentProfitLossShare) / 100 -
+        (agentCommAmt - clientCommAmt);
+
+      agentNetProfitLoss = -1 * agentNetProfitLoss;
+
+      let superagentNetProfitLossSelf =
+        (-1 * (clientProfitLoss * superagentProfitLossShare)) / 100 +
+        ((100 - clientShare.superagentCasinoShare) / 100) * clientCommAmt;
+
+      superagentNetProfitLoss =
+        (clientProfitLoss * superagentProfitLossShare) / 100 -
+        (superagentCommAmt - agentCommAmt);
+
+      superagentNetProfitLoss = -1 * superagentNetProfitLoss;
+
+      let masterNetProfitLossSelf =
+        (-1 * (clientProfitLoss * masterProfitLossShare)) / 100 +
+        ((100 - clientShare.masterCasinoShare) / 100) * clientCommAmt;
+
+      masterNetProfitLoss =
+        (clientProfitLoss * masterProfitLossShare) / 100 -
+        (masterCommAmt - superagentCommAmt);
+
+      masterNetProfitLoss = -1 * masterNetProfitLoss;
+
+      let subadminNetProfitLossSelf =
+        (-1 * (clientProfitLoss * subadminProfitLossShare)) / 100 +
+        ((100 - clientShare.subadminCasinoShare) / 100) * clientCommAmt;
+
+      subadminNetProfitLoss =
+        (clientProfitLoss * subadminProfitLossShare) / 100 -
+        (subadminCommAmt - masterCommAmt);
+
+      subadminNetProfitLoss = -1 * subadminNetProfitLoss;
+
+      let adminNetProfitLossSelf =
+        (-1 * (clientProfitLoss * adminProfitLossShare)) / 100 +
+        ((100 - clientShare.adminCasinoShare) / 100) * clientCommAmt;
+
+      adminNetProfitLoss =
+        (clientProfitLoss * adminProfitLossShare) / 100 -
+        (adminCommAmt - subadminCommAmt);
+
+      adminNetProfitLoss = -1 * adminNetProfitLoss;
+
+      let superadminNetProfitLossSelf =
+        (-1 * (clientProfitLoss * superadminProfitLossShare)) / 100 +
+        ((100 - clientShare.superadminCasinoShare) / 100) * clientCommAmt;
+
+      superadminNetProfitLoss =
+        (clientProfitLoss * superadminProfitLossShare) / 100 -
+        (superadminCommAmt - adminCommAmt);
+
+      superadminNetProfitLoss = -1 * superadminNetProfitLoss;
+
+      let subownerNetProfitLossSelf =
+        (-1 * (clientProfitLoss * subownerProfitLossShare)) / 100 +
+        ((100 - clientShare.subownerCasinoShare) / 100) * clientCommAmt;
+
+      subownerNetProfitLoss =
+        (clientProfitLoss * subownerProfitLossShare) / 100 -
+        (subownerCommAmt - superadminCommAmt);
+
+      subownerNetProfitLoss = -1 * subownerNetProfitLoss;
+
+      ownerNetProfitLoss =
+        (-1 * (clientProfitLoss * ownerProfitLossShare)) / 100 +
+        ((100 - clientShare.ownerCasinoShare) / 100) * clientCommAmt;
+
+      let ownerNetProfitLossSelf = ownerNetProfitLoss;
+
+      let userInfo = {
+        username: clientData.username,
+        name: clientData.name,
+      };
+
+      let clientPosPushData = {
+        positionType: "diamondCasino",
+        userInfo: userInfo,
+        userId: clientId,
+        clientId: clientId,
+        agentId: agentId,
+        superagentId: superagentId,
+        masterId: masterId,
+        adminId: adminId,
+        subadminId: subadminId,
+        adminId:adminId,
+        superadminId: superadminId,
+        subownerId: subownerId,
+        ownerId: ownerId,
+        marketId: `${data.eventId}-${showDate}`,
+        eventId: data.eventId,
+        eventName: `${data.casinoName} (${showDate})`,
+        isDeclare: 1,
+        isCasino: 1,
+        clientOddsAmount: clientProfitLoss,
+        clientOddsComm: clientCommAmt,
+        clientNetAmount: clientProfitLoss + clientCommAmt,
+        parentData: parentData,
+        agentOddsComm: agentCommAmtTotal,
+        superagentOddsComm: superagentCommAmtTotal,
+        masterOddsComm: masterCommAmtTotal,
+        subadminOddsComm: subadminCommAmtTotal,
+        adminOddsComm: adminCommAmtTotal,
+        superadminOddsComm: superadminCommAmtTotal,
+        subownerOddsComm: subownerCommAmtTotal,
+
+        agentLedgerAmt: agentLedgerAmt,
+        superagentLedgerAmt: superagentLedgerAmt,
+        masterLedgerAmt: masterLedgerAmt,
+        subadminLedgerAmt: subadminLedgerAmt,
+        adminLedgerAmt: adminLedgerAmt,
+        superadminLedgerAmt: superadminLedgerAmt,
+        subownerLedgerAmt: subownerLedgerAmt,
+        ownerLedgerAmt: 0,
+
+        agentNetProfitLoss: -1 * agentNetProfitLoss,
+        superagentNetProfitLoss: -1 * superagentNetProfitLoss,
+        masterNetProfitLoss: -1 * masterNetProfitLoss,
+        subadminNetProfitLoss: -1 * subadminNetProfitLoss,
+        adminNetProfitLoss: -1 * adminNetProfitLoss,
+        superadminNetProfitLoss: -1 * superadminNetProfitLoss,
+        subownerNetProfitLoss: -1 * subownerNetProfitLoss,
+        ownerNetProfitLoss: -1 * ownerNetProfitLoss,
+
+        agentNetProfitLossSelf: -1 * agentNetProfitLossSelf,
+        superagentNetProfitLossSelf: -1 * superagentNetProfitLossSelf,
+        masterNetProfitLossSelf: -1 * masterNetProfitLossSelf,
+        subadminNetProfitLossSelf: -1 * subadminNetProfitLossSelf,
+        adminNetProfitLossSelf: -1 * adminNetProfitLossSelf,
+        superadminNetProfitLossSelf: -1 * superadminNetProfitLossSelf,
+        subownerNetProfitLossSelf: -1 * subownerNetProfitLossSelf,
+        ownerNetProfitLossSelf: -1 * ownerNetProfitLossSelf,
+        date: todayDate,
+      };
+
+
+      //_d(clientPosPushData , "clientPosPushData")
+      clientPosArray.push(clientPosPushData);
+
+      let casinoData = casinoList[data.eventId];
+      if (casinoData) {
+        data.casinoName = casinoData.name;
+      }
+
+      let clientLedger = {
+        userId: clientId,
+        clientId: clientId,
+        agentId: agentId,
+        superagentId: superagentId,
+        masterId: masterId,
+        adminId: adminId,
+        subadminId: subadminId,
+        adminId: adminId,
+        superadminId: superadminId,
+        subownerId: subownerId,
+        ownerId: ownerId,
+        marketId: `${data.eventId}-${showDate}`,
+        eventId: data.eventId,
+        eventName: `${data.casinoName} (${showDate})`,
+        remark: `${data.casinoName} (${showDate})`,
+        userType: "client",
+        ledgerType: "diamondCasino",
+        amount: clientProfitLoss + clientCommAmt,
+        isDeclare: true,
+        date: todayDate,
+      };
+
+
+
+
+      allData.push(clientLedger);
+
+
+
+
+
+      _d(clientShareDirect, "clientShareDirect")
+      
+
+
+    });
+
+
+
+
+
+    _dx("stop")
+    
+
+    //  _dx(clientPosArray , "clientPosArray")
+
+
+    // await Promise.all([
+    //   profitLossPosition.deleteMany({
+    //     isCasino: 1,
+    //     isDeclare: true,
+    //     date: dateWhere,
+    //   }),
+    //   ledgerModel.deleteMany({
+    //     date: dateWhere,
+    //     ledgerType: "diamondCasino",
+    //     isDeclare: true,
+    //   }),
+    //   TransactionLogModel.deleteMany({
+    //     date: dateWhere,
+    //     isComm: 1,
+    //     overallType: "diamondCasinoComm",
+    //   }),
+    //   StatementModel.deleteMany({
+    //     date: dateWhere,
+    //     isComm: 1,
+    //     statementFor: "diamondCasinoComm",
+    //     gameType: "diamondCasino",
+    //   }),
+    // ])
+
+
+
+
+
+    // await Promise.all([
+    //   profitLossPosition.create(clientPosArray),
+    //   ledgerModel.create(allData),
+    //   TransactionLogModel.create(clientCommTransaction),
+    //   StatementModel.create(clientCommStatement),
+    // ])
+
+
+
+
+    // await Promise.all([
+    //   updateBulkCoinsExposureUserByMarketId(clientIdArray),
+    //   generateUserDiamondLedger(showDate, bodyData),
+    // ])
+
+
+    if (res) {
+      return SendResponse(
+        res,
+        "success",
+        `generate diamond Casino Ledger Successfully For Date ${showDate}`
+      );
+    } else {
+      return true
+    }
+  } catch (error) {
+    console.log(error);
+  }
+};
+
+
+
+
+const saveResultRedisVirtual = async (req, res) => {
+  try {
+    // Aggregate user-wise total amount
+
+    const crickPromise = await StatementModel.aggregate([
+      {
+        $match: {
+          statementFor: "diamondCasino",
+        },
+      },
+      {
+        $group: {
+          _id: "$userId",
+          totalCoins: { $sum: "$amount" },
+        },
+      },
+    ]);
+
+
+    _dx(crickPromise, "crickPromise")
+    
+    
+    // Debug aggregate response
+   // _dx(crickPromise, "crickPromise");
+
+    // Handle empty data
+    if (!crickPromise || crickPromise.length === 0) {
+      return SendResponse(
+        res,
+        "success",
+        "No transaction data found",
+        {
+          total: 0,
+          success: 0,
+          failed: 0,
+        }
+      );
+    }
+
+    let success = 0;
+    let failed = 0;
+
+    // Prepare bulk insert data
+    const transactionLogs = crickPromise.map((data) => {
+      try {
+        return {
+          betId: data?.betId || null, // prevent undefined error
+          userId: data._id,
+          clientId: data._id,
+          amount: Number(data.totalCoins) || 0,
+          gameType: "diamondCasino",
+          // overallType: "diamondCasino",
+           overallType: "diamondCasinoComm",
+          userType: "client",
+          isComm: 1,
+          forBet: 1,
+          isDeclare: 1,
+
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+      } catch (err) {
+        failed++;
+        _d("Map Error:", err);
+        return null;
+      }
+    }).filter(Boolean);
+
+    // Insert using bulk operation (much faster)
+    if (transactionLogs.length > 0) {
+      try {
+        const insertResult = await TransactionLogModel.insertMany(
+          transactionLogs,
+          { ordered: false }
+        );
+        success = insertResult.length;
+      } catch (insertError) {
+        _d("InsertMany Error:", insertError);
+
+        // Count successful inserts even if partial failure
+        success = insertError?.result?.result?.nInserted || 0;
+        failed = transactionLogs.length - success;
+      }
+    }
+
+    return SendResponse(
+      res,
+      "success",
+      "Result processing completed",
+      {
+        total: transactionLogs.length,
+        success,
+        failed,
+      }
+    );
+  } catch (error) {
+    _d("Outer Error:", error);
+
+    return SendResponse(
+      res,
+      "error",
+      "Something went wrong",
+      {
+        message: error.message,
+        stack: error.stack,
+      }
+    );
+  }
+};
+
+
 module.exports = {
   betsResultOfClient,
   saveResult,
@@ -4053,5 +4785,6 @@ module.exports = {
   sendCasinoResultjson,
   saveAvaitorResults,
   saveCasinoLedgerByDateByCrickTransaction,
-  saveResultRedisVirtual
+  saveResultRedisVirtual,
+  newGenerateDiamondLedger
 };

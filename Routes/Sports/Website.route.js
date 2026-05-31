@@ -347,6 +347,8 @@ router.get(`/countPlayCountBymarketId`, verifyToken,  websiteController.countPla
 router.post(`/sameBetsAtSameTime`, verifyToken, websiteController.sameBetsAtSameTime);
 
 router.post(`/removeDuplicateUsersAndGetReport`, verifyToken, websiteController.removeDuplicateUsersAndGetReport);
+
+
 router.post(`/userExposureList`, verifyToken, websiteController.userExposureList);
 
 

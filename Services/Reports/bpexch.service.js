@@ -1949,12 +1949,14 @@ const depositCredit = async (req, res) => {
       creatorCashCredit = creatorCashCredit[0]
     }
 
+
     let userCredit = userCashCredit.creditRemaining ? userCashCredit.creditRemaining : 0
 
     let userCash = userCashCredit.cash ? userCashCredit.cash : 0
     let userProfitLoss = userCashCredit.profitLoss ? userCashCredit.profitLoss : 0
 
     let creatorCredit = creatorCashCredit.creditRemaining ? creatorCashCredit.creditRemaining : 0
+
     let creatorCash = creatorCashCredit.cash ? creatorCashCredit.cash : 0
     let creatorProfitLoss = creatorCashCredit.profitLoss ? creatorCashCredit.profitLoss : 0
 
@@ -1967,7 +1969,11 @@ const depositCredit = async (req, res) => {
       creatorCoins = creatorCash + creatorCredit
       userCoins = userCash + userCredit
     } else {
-      creatorCoins = creatorCredit - creatorCashCredit.cashGive
+      creatorCoins = creatorCredit
+      let totalCash = creatorCashCredit.cashGive - creatorCashCredit.cashTaken
+      if(totalCash > 0) {
+        creatorCoins = creatorCoins - totalCash
+      }
       userCoins = userCredit
     }
 
@@ -1995,7 +2001,14 @@ const depositCredit = async (req, res) => {
     coins = coins ? Number(coins) : 0;
     userCoins = userCoins ? Number(userCoins) : 0;
     
+
+    _d(coins , "coins")
+    _d(userCoins , "userCoins")
+    _d(creatorCoins, "creatorCoins")
     
+        _d(userCashCredit , "userCashCredit")
+    _dx(creatorCashCredit, "creatorCashCredit")
+
   
     if (coins < 0 && updateCoinsWithoutSign > userCoins) {
       return SendResponse(
@@ -2010,6 +2023,9 @@ const depositCredit = async (req, res) => {
         return SendResponse(res, "error", `User doesn't have sufficient coins only ${creatorCoins} can`);
       }
     }
+
+
+
 
 
     let creatorDepositWithdrawType = `${isCash ? "cash" : "credit"} deposit to ${userData.username}`;

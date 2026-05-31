@@ -33,7 +33,7 @@ const AVAILABLE_PAGES = [
   { key: "settings_commonSetting", label: "Common Setting" },
   { key: "settings_getTransaction", label: "Get Transaction" },
   { key: "settings_negativeUsers", label: "Negative Users" },
-  { key: "settings_flushRedis", label: "Flush Redis" },
+  { key: "settings_flushRedis", label: "Flush Redis" }, 
   { key: "settings_diamondVideo", label: "Diamond Video" },
   { key: "settings_gapCasinoList", label: "Gap Casino List" },
   { key: "settings_rollbackFancies", label: "Roll Back Fancies" },

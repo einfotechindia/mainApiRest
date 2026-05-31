@@ -1,5 +1,5 @@
 const express = require("express");
-const { verifyToken } = require("../Middlewares/VerifyToken");
+const { verifyToken ,isOwnerAndStaff } = require("../Middlewares/VerifyToken");
 const router = express.Router();
 const damanController = require("../Controllers/Daman/daman.controller");
 const sqlnitinDatase = require("../Controllers/nitinDatabase");
@@ -22,7 +22,7 @@ router.post("/getTrackingActivites", verifyToken, damanController.getTrackingAct
 router.post("/checkIpAddress", verifyToken, damanController.checkIpAddress); 
 router.post("/deleteTrackingActivities", verifyToken, damanController.deleteTrackingActivities); 
 router.post("/updateBetsData", verifyToken, damanController.updateBetsData); 
-router.post("/deleteBetsDataPermanently", verifyToken, damanController.deleteBetsDataPermanently); 
+router.post("/deleteBetsDataPermanently", verifyToken, isOwnerAndStaff , damanController.deleteBetsDataPermanently); 
 
 
 // nitin Database Routes

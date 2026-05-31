@@ -5592,17 +5592,18 @@ const validateMultipleFancy = async (req, res) => {
 
 
 const userExposureList = async (req, res) => {
-  const bodyData = req.body;
   const loggedUserData = req.loggedInUser;
-  const userType = loggedUserData.userType;
   let where = await whereHelper(loggedUserData, {
-    exposure : { $lt : 0}
+    exposure: { $lt: 0 },
+    userType : "client"
   });
   let exposerList = await UserModel.find(where, {
     exposure: 1,
     username: 1,
     userId: 1,
     coins: 1,
+    name: 1,
+    totalProfitLoss: 1,
     creatorShareData:1
   });
   return SendResponse(res, "success", "", exposerList);

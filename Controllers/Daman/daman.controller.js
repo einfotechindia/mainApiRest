@@ -27,6 +27,7 @@ const casinoBetModel = require("../../Models/BetsList/CasinoBetsList.model");
 const matkaBetModel = require("../../Models/Matka/MatkaBets.model");
 const CrickTransactionLogModel = require("../../Models/crickTransaction.model");
 const StatementModel = require("../../Models/Statement.model");
+const DeleteBetsDataModel = require("../../Models/deleteBetsData.model");
 
 const {
   UpdateUserCoins,
@@ -660,11 +661,7 @@ const deleteBetsDataPermanently = async (req,res)=>{
     );
   }
 
-   let BETS_DELETE_PASSWORD = process.env.BETS_DELETE_PASSWORD
-    if (userData.userType == "subowner") {
-      BETS_DELETE_PASSWORD = process.env.SUBOWNER_BETS_DELETE_PASSWORD ? process.env.SUBOWNER_BETS_DELETE_PASSWORD : process.env.BETS_DELETE_PASSWORD
-    }
-  
+    let BETS_DELETE_PASSWORD = process.env.BETS_DELETE_PASSWORD
     if (bodyData.password != BETS_DELETE_PASSWORD) {
       return SendResponse(
         res,
@@ -676,24 +673,37 @@ const deleteBetsDataPermanently = async (req,res)=>{
 
   let returnData = []
   let clientIdArray = []
+  let betsType = bodyData.betsType
+  let deleteBetsData = []
+
   for (const element of betsIdArray) {
-  let updateObjReturn = {}
-  const betsType = element.betsType;
-  const updateObj = element.updateObj || {};
-  const userId = new ObjectId(element.userId);
-    const betId = new ObjectId(element.betId);
-    clientIdArray.push(userId)
+     const betId = new ObjectId(element);
+    let updateObjReturn = {}
+    
     if (betsType === "fancy") {
       let fancyBetDetails = await FancyBetModel.findOne(
-        { userId: userId, _id: betId }
+        { _id: betId }
       )
+
+      if (!fancyBetDetails) {
+        return true
+      }
+
+      deleteBetsData.push({
+        betType: "fancy",
+        data: fancyBetDetails,
+      })
+
+      userId = new ObjectId(fancyBetDetails.userId);
+      clientIdArray.push(userId)
+     
       let marketId = fancyBetDetails.marketId
       let selectionId = fancyBetDetails.selectionId
 
       updateObjReturn = await FancyBetModel.deleteOne(
        { userId: userId, _id: betId , marketId : marketId, selectionId : selectionId   }
       );
-      
+
       let deteleteTransactioLog = await TransactionLogModel.deleteMany({
         userId: userId,
         selectionId: selectionId,
@@ -714,16 +724,25 @@ const deleteBetsDataPermanently = async (req,res)=>{
         marketId: marketId,
       })
       
-     await client.del(`${userId}_fancyData_${marketId}`);
-     await client.del(`${userId}_oddsData_${marketId}`);
+      await client.del(`${userId}_fancyData_${marketId}`);
+      await client.del(`${userId}_oddsData_${marketId}`);
 
     } else if (betsType === "diamondCasino") {
+      let casinoBetDetails = await casinoBetModel.deleteOne(
+        { _id: betId }
+      )
+
+       if (!casinoBetDetails) {
+        return true
+       }
       
-    clientIdArray.push(userId)
-     updateObjReturn = await casinoBetModel.deleteOne(
-       { userId: userId, _id: betId }
-     )
+       deleteBetsData.push({
+        betType: "casino",
+        data: casinoBetDetails,
+      })
       
+      const userId = new ObjectId(casinoBetDetails.userId);
+      clientIdArray.push(userId)
       
       // let statementModel = await StatementModel.deleteMany({
       //   userId: userId,
@@ -737,19 +756,19 @@ const deleteBetsDataPermanently = async (req,res)=>{
       //   marketId: marketId,
       // })
 
-      let deteleteTransactioLog = await TransactionLogModel.deleteMany({
-        userId: userId,
-        selectionId: selectionId,
-        marketId: marketId,
-        forBet:1
-      })
-
-      
-
-
-   }
-   returnData.push(updateObjReturn)
+      // let deteleteTransactioLog = await TransactionLogModel.deleteMany({
+      //   userId: userId,
+      //   selectionId: selectionId,
+      //   marketId: marketId,
+      //   forBet:1
+      // })
+    }
+    
+    returnData.push(updateObjReturn)
   }
+
+  await DeleteBetsDataModel.insertMany(deleteBetsData)
+  clientIdArray = [...new Map(clientIdArray.map(id => [id.toString(), id])).values()];
 
    let ResponseMapper = await updateBulkCoinsExposureUserByMarketId(
         clientIdArray
