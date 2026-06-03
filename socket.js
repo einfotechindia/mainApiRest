@@ -16,10 +16,9 @@ let io = null;
 let redisPub = null;
 let redisSub = null;
 let redisClient = null;
-let httpServerAttached = false; 
+let httpServerAttached = false;
 
 const userSockets = new Map();
-
 
 async function ensureRedisClients() {
   if (redisClient && redisPub && redisSub) return;
@@ -301,17 +300,17 @@ const emitSocket = (event, data, roomId = null) => {
   }
 };
 
-const emitToUser = async (event, data ,userId) => {
+const emitToUser = async (event, data, userId) => {
   if (!httpServerAttached) {
     return _getEmitter().emitToUser(event, data, userId);
   }
   try {
     if (!userId) return;
     userId = String(userId);
-    //console.log(userId , "userId in emit to user" )
+    console.log(userId , "userId in emit to user" )
     await ensureRedisClients();
     const socketIds = await getActiveSocketIds(userId);
-    //console.log(socketIds , "socketIds")
+    console.log(socketIds , "socketIds")
     if (!socketIds || socketIds.length === 0) {
       return { sent: 0 };
     }
@@ -395,7 +394,7 @@ const getAllOnlineUsers = async () => {
         onlineUsers.push(userId);
       }
     }
-    console.log(`🟢 Found ${onlineUsers.length} online users.` , onlineUsers);
+    console.log(`🟢 Found ${onlineUsers.length} online users.`, onlineUsers);
     return onlineUsers;
   } catch (err) {
     console.error("getAllOnlineUsers error:", err);

@@ -39,7 +39,7 @@ const {
   _date,
   gameBetValidaterRedis
 } = require("../../Helpers/CommonHelper");
-const {emitSocket} =  require("../../socket.js")
+const { emitToUser } =  require("../../socket.js")
 
 const axios = require("axios");
 const CrickTransactionLogModel = require("../../Models/crickTransaction.model.js");
@@ -86,16 +86,8 @@ const updateDiamondCasino = async (req, res) => {
     return SendResponse(res, "error", "event id is required");
   }
 
-
-
-  _d(bodyData, "bodyData in updateDiamondCasino")
-
-
-
   let casinoData = await DiamondCasinoService.updateDiamondCasino(bodyData);
-
-
-
+  
   return SendResponse(
     res,
     casinoData.status,
@@ -3330,6 +3322,376 @@ const avaitorCashOut = async (req, res) => {
   }
 };
 
+const casinoBetfairBetPlace = async (req, res) => {
+  let bodyData = req.body;
+  const loginData = req.loggedInUser;
+  let userId = loginData.userId
+  let isLayBack = false;
+  let layBackType = "back";
+  if (bodyData.hasOwnProperty("betType")) {
+    isLayBack = true;
+  }
+  if (isLayBack) {
+    layBackType = bodyData.betType ? bodyData.betType : "back";
+  }
+  bodyData.isLayBack = isLayBack;
+  bodyData.layBackType = layBackType;
+
+  const JoiSchema = Joi.object({
+    roundId: Joi.string().required(),
+    sid: Joi.string().required(),
+    rate: Joi.string().required(),
+    amount: Joi.number().required(),
+    eventId: Joi.number().required(),
+    casinoType: Joi.string().required(),
+  }).options({ abortEarly: false, allowUnknown: true });
+  const { error } = JoiSchema.validate(bodyData);
+  if (error) {
+    const errorMessages = error.details.map((detail) =>
+      detail.message.replace(/\"/g, "")
+    );
+    return SendResponse(res, "error", "Failed In validation", errorMessages);
+  }
+
+  
+  let [setRedisKeyForBet, timerCheck , casinoData] = await Promise.all([
+    gameBetValidaterRedis(userId),
+    checkLastBetTiming(loginData.userId, 5),
+    DiamondCasinoService.checkCasinoData(bodyData)
+  ])
+
+  if(!setRedisKeyForBet){
+    return SendResponse(res, "error", `Please wait for a moment before placing another bet`);
+  }
+
+  if (!timerCheck) {
+    return SendResponse(res, "error", "odds expired due to instant bet");
+  }
+
+  if (casinoData.status == "error") {
+    return SendResponse(res, "error", casinoData.message);
+  }
+
+  casinoData = casinoData.data;
+
+  const betAmount = bodyData.amount;
+
+  let casinoType = bodyData.casinoType;
+
+  let betFor = "odds";
+
+  if (bodyData.betFor && bodyData.betFor != undefined) {
+    betFor = bodyData?.betFor;
+  }
+
+  let clientId = loginData.userId;
+  let checkOddsCasinoData = {};
+
+  try {
+    if (loginData.userType !== "client") {
+      return SendResponse(res, "error", "Only client Authorized to place bet");
+    }
+
+    let isBetfair = true
+
+    let casinoAPIData = await axios.post(casinoData.cacheURL, {
+        casinoType : casinoData.shortName
+      });
+    
+
+   if (casinoAPIData?.data?.data?.status) {
+     let casinoLiveData = JSON.parse(casinoAPIData?.data?.data?.status);
+      checkOddsCasinoData = await DiamondCasinoService.checkBetfairCasinoOdds(
+        casinoLiveData,
+        bodyData,
+        casinoData
+      );
+      if (checkOddsCasinoData.status == "error") {
+        return SendResponse(
+          res,
+          checkOddsCasinoData.status,
+          checkOddsCasinoData.message
+        );
+      }
+
+    }
+    else {
+      return SendResponse(res, "error", `Fetch Cache data Error In Live Data`);
+    }
+
+
+    let finalOddsData = checkOddsCasinoData?.data;
+
+
+
+    finalOddsData.amount = betAmount;
+
+
+    
+    const roundId = finalOddsData.roundId;
+    let sid = finalOddsData.sid;
+    let allOddsData = finalOddsData.allOddsData;
+    let selectionData = finalOddsData.selectionData ? finalOddsData.selectionData : []
+    let nation = selectionData?.name ? selectionData?.name : ``
+
+
+    delete finalOddsData.allOddsData;
+    delete finalOddsData.oddsFinalData;
+
+  
+    let profit = 0;
+    let loss = -1 * bodyData.amount;
+
+    const winLoseAmt = await winLoseAmtByCasinoType(finalOddsData, bodyData);
+
+    if (winLoseAmt.status == "error") {
+      return SendResponse(res, "error", winLoseAmt.message);
+    } else {
+      profit = winLoseAmt.data.winAmt;
+      loss = -1 * winLoseAmt.data.lossAmt;
+    }
+
+    profit = Number(profit.toFixed(2));
+    loss = Number(loss.toFixed(2));
+
+    const clientData = await UserModel.findOne({
+      userId: new ObjectId(clientId),
+    });
+
+    if (!clientData) {
+      return SendResponse(
+        res,
+        "error",
+        "user not found ! something went wrong"
+      );
+    }
+    if (!clientData.status) {
+      return SendResponse(
+        res,
+        "error",
+        "client is inactive Please contact your upperline"
+      );
+    }
+
+    if (!clientData.casinoStatus) {
+      return SendResponse(
+        res,
+        "error",
+        "your casino  is blocked ! please contact your upperline"
+      );
+    }
+
+    if (clientData.coins < 0) {
+      return SendResponse(
+        res,
+        "error",
+        "something went wrong client coins can not be negative"
+      );
+    }
+
+    let userLatestCoins = clientData.coins;
+
+    let realUserCoins = await getUserCoinsByTransactionTable(clientData._id)
+    if(realUserCoins && realUserCoins.totalCoins){
+      userLatestCoins = realUserCoins.totalCoins
+    }
+    
+    const userId = clientData.userId;
+    const eventId = casinoData.eventId;
+    let deductAmount = loss;
+    let checkAmount = Math.abs(loss);
+    casinoType = casinoData.name;
+
+    betFor = bodyData.selectionType?bodyData.selectionType:"main";
+
+ 
+    let previousCasinoBetsWhere = {
+      clientId: userId,
+      eventId: eventId,
+      roundId: roundId,
+      betFor: betFor,
+      isBetfairCasino: true,
+    };
+
+    let previousCasinoBets = await casinoBetModel.find(
+      previousCasinoBetsWhere,
+      {
+        amount: 1,
+        userId: 1,
+        clientId: 1,
+        sid: 1,
+        roundId: 1,
+        betType: 1,
+        betFor: 1,
+        casinoType: 1,
+        playerName: 1,
+        odds: 1,
+        profit: 1,
+        loss: 1,
+      }
+    );
+
+    var clientIp = requestIp.getClientIp(req);
+
+    let insertBet = {
+      userId: userId,
+      userInfo: { username: clientData.username, name: clientData.name },
+      roundId: roundId,
+      amount: betAmount,
+      sid: sid,
+      eventId: eventId,
+      casinoType: casinoType,
+      playerName: nation,
+      ip: clientIp,
+      betType: layBackType == "back" ? "L" : "K",
+      odds: finalOddsData.rate,
+      profit: profit.toFixed(2),
+      loss: loss.toFixed(2),
+      betFor: betFor,
+      isBetfairCasino: true,
+    };
+
+
+    let posArray  = {}
+    let posArrayBet = [];
+    posArrayBet.push(insertBet);
+
+    posArray = await DiamondCasinoService.getBetfairCasinoPositionVirtual(
+          posArrayBet,
+          allOddsData,
+        );
+
+
+    insertBet.posArray = posArray.positionArray;
+
+    if (previousCasinoBets.length > 0) {
+      let previousPosition = await DiamondCasinoService.getBetfairCasinoPositionVirtual(
+        previousCasinoBets,
+        allOddsData
+      );
+
+      let positionArray = previousPosition.positionArray;
+      let previousAmountPos = previousPosition.amountPos;
+      previousMinAmountPos = Math.min(...previousAmountPos);
+
+      previousCasinoBets.push(insertBet);
+
+      let latestPosition = await DiamondCasinoService.getBetfairCasinoPositionVirtual(
+        previousCasinoBets,
+        allOddsData
+      );
+
+      let latesPositionArray = latestPosition.positionArray;
+      let latestAmountPos = latestPosition.amountPos;
+
+      latestMinAmountPos = Math.min(...latestAmountPos);
+      checkAmount = latestMinAmountPos - previousMinAmountPos;
+
+      if (checkAmount > 0) {
+        checkAmount = 0;
+      } else {
+        checkAmount = Math.abs(checkAmount);
+      }
+
+      deductAmount = latestMinAmountPos;
+    }
+
+    if (checkAmount > userLatestCoins) {
+      return SendResponse(res, "error", `Invalid Amount`);
+    }
+
+    await TransactionLogModel.deleteOne({
+      userId: userId,
+      marketId: roundId,
+      gameType: "betfairCasino",
+      gameName: `${casinoType}-${betFor}`,
+      userType: "client",
+      remarks : "betfairCasino"
+    });
+
+    let shareData = await getShareDataByUserId(userId);
+    shareData = shareData.shareData;
+
+
+    let logData = {
+      gameType: "betfairCasino",
+      gameName: `${casinoType}-${betFor}`,
+      userType: "client",
+      userId: userId,
+      marketId: roundId,
+      eventId: eventId,
+      selectionId: sid,
+      amount: deductAmount,
+      forBet: 1,
+      overallType: "diamondCasino",
+      remarks: `${casinoType} (${eventId}) bet  for roundId ${roundId} for ${nation} `,
+    };
+
+    insertBet = await parentDataAppend(clientData, insertBet);
+    let casinoBetData = await casinoBetModel.create(insertBet);
+    logData.betId = casinoBetData._id;
+
+
+    await insertTransactionLogCasino(clientData, logData, shareData);
+    const updateCoins = await updateCoinsTbl(userId, clientData.userType);
+
+    if(updateCoins.totalCoins < 0 ){
+        let logData = {
+          gameType: "diamondCasino",
+          gameName: `betfairCasino`,
+          userType: "client",
+          userId: userId,
+          marketId: roundId,
+          eventId: eventId,
+          selectionId: sid,
+          amount: -1 * Math.abs(previousMinAmountPos),
+          forBet: 1,
+          overallType: "diamondCasino",
+          remarks: `${casinoType} (${eventId}) bet  for roundId ${roundId} for ${nation} `,
+        };
+
+        await TransactionLogModel.deleteOne({
+          userId: userId,
+          marketId: roundId,
+          gameType: "diamondCasino",
+          gameName: `betfairCasino`,
+          userType: "client",
+        });
+
+      await insertTransactionLogCasino(clientData, logData, shareData);
+      const updateCoinsAgain = await updateCoinsTbl(userId, clientData.userType);
+      await casinoBetModel.deleteOne({
+        _id: casinoBetData._id,
+      });
+       return SendResponse(
+        res,
+        "error",
+        "invalid Amount",
+        updateCoinsAgain
+      );
+    }
+
+    const timestamp = Date.now();
+    await client.set(`lastBetTimeUser__${userId}`, timestamp);
+
+    return SendResponse(
+      res,
+      "success",
+      `Casino Bet Successfully Placed For ${casinoType}`,
+      updateCoins
+    );
+  } catch (error) {
+    console.log(`Something Went Wrong In Casino Bet Place For ${casinoType} in casinoBetPlace`, error);
+    return SendResponse(
+      res,
+      "error",
+      `Something Went Wrong In Casino Bet Place For ${casinoType} in casinoBetPlace`,
+      error
+    );
+  }finally {
+    await gameBetValidaterRedis(userId , "del")
+  }
+};
 
 
 module.exports = {
@@ -3352,5 +3714,6 @@ module.exports = {
   redeclareRoundId,
   resultByRoundWise,
   avaitorGamePlace,
-  avaitorCashOut
+  avaitorCashOut,
+  casinoBetfairBetPlace
 };

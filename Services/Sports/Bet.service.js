@@ -336,6 +336,11 @@ const checkLiveMatchOdds = async (reqData, oddsRange = 0 , isCombinedNew = false
     );
   }
 
+
+  let isLineMarket = false
+  if (reqData && reqData.isLineMarket) {
+    isLineMarket = true
+  }
   const defaultBetDelay = Number(matchData.betDelayTime) || 0;
   const betDelaySetting = matchData.betDelaySetting ?? {};
 
@@ -345,9 +350,11 @@ const checkLiveMatchOdds = async (reqData, oddsRange = 0 , isCombinedNew = false
     matchOdds: "matchOddsBetDelay",
     tiedMatch: "tieBetDelay",
     odds: "bookMakerBetDelay",
+    line:"lineMarketfancyBetDelay"
   };
 
-  const chosenKey = betDelayKeyByBetFor[reqData.betFor];
+  const chosenKey = isLineMarket ? betDelayKeyByBetFor["line"] : betDelayKeyByBetFor[reqData.betFor];
+  
   let betDelayTime = Number(defaultBetDelay);
   if (chosenKey && isFinite(Number(betDelaySetting[chosenKey]))) {
     const override = Number(betDelaySetting[chosenKey]);
@@ -2206,13 +2213,11 @@ const saveSportsData = async (sportData, settingData) => {
           socketPerm: settingData.isSocketPerm
             ? settingData.isSocketPerm
             : true,
-
           betfairSocketUrl: betfairSocketUrl,
           socketUrl: socketUrl,
           checkOddsUrl: checkOddsUrl,
           cacheUrl: cacheUrl,
           otherMarketCacheUrl: otherMarketCacheUrl,
-
           tvUrl: tvUrl,
           scoreIframe: scoreIframe,
           scoreIframe2: scoreIframe2,
@@ -2237,6 +2242,9 @@ const saveSportsData = async (sportData, settingData) => {
               ? settingData.matchOddsBetDelay
               : value.betDelay,
             tossBetDelay: 0,
+            lineMarketfancyBetDelay: settingData.matchOddsBetDelay
+              ? settingData.matchOddsBetDelay
+              : 0,
           },
           tossRate: settingData.tossRate ? Number(settingData.tossRate) : 0
         };

@@ -205,6 +205,10 @@ const CrickTransactionLogSchema = new mongoose.Schema(
       type: String,
       required: false,
     },
+    betId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
     date: {
       type: Number,
       default: () => moment().startOf("day").toDate(),

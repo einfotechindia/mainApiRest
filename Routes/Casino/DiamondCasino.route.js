@@ -8,6 +8,14 @@ router.post(
   verifyToken,
   diamondCasinoController.casinoBetPlace
 );
+
+router.post(
+ "/casinoBetfairBetPlace",
+  verifyToken,
+  diamondCasinoController.casinoBetfairBetPlace
+);
+
+
 router.post(
   "/getDiamondCasinoData",
   verifyToken,
@@ -18,9 +26,12 @@ router.post(
   verifyToken,
   diamondCasinoController.getDiamondCasinoByEventId
 );
+
+
 router.post(
   "/updateDiamondCasino",
   verifyToken,
+  isOwnerAndStaff,
   diamondCasinoController.updateDiamondCasino
 );
 
@@ -100,6 +111,7 @@ router.post(
   isOwnerAndStaff,
   diamondCasinoController.resultByRoundWise
 );
+
 
 // diamond result Controller
 router.post("/saveResult", verifyToken,
@@ -189,13 +201,35 @@ router.post(
 );
 
 
-
 router.post(
  "/newGenerateDiamondLedger",
   verifyToken,
   isOwnerAndStaff,
   diamondResultController.newGenerateDiamondLedger
 );
+
+
+router.post(
+ "/saveVirtul",
+  verifyToken,
+  isOwnerAndStaff,
+  diamondResultController.newGenerateDiamondLedger
+);
+
+router.post(
+  "/casinoBetPlace",
+  verifyToken,
+  diamondCasinoController.casinoBetPlace
+);
+
+
+router.post(
+ "/saveBetfairCasinoResults",
+  verifyToken,
+  isOwnerAndStaff,
+  diamondResultController.saveBetfairCasinoResults
+);
+
 
 
 

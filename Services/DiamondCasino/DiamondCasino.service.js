@@ -53,6 +53,7 @@ const getDiamondCasinoByEventId = async (eventId) => {
 
 const updateDiamondCasino = async (bodyData) => {
   const eventId = bodyData.eventId;
+
     const result = await diamondCasinoList.updateOne(
       { eventId: eventId },      // filter
       { $set: bodyData },        // update data
@@ -408,7 +409,6 @@ let checkCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) => {
       "Odds are expired because data is not coming please do bet again"
     );
   }
-
 
 
   if (roundId) {
@@ -2600,7 +2600,125 @@ const getCasinoPositionVirtual = async (betsData, selectionData) => {
 };
 
 
+let checkBetfairCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) => {
+  let selections = casinoApiData?.selections ?  casinoApiData?.selections : {}
+  let sideSelections  = casinoApiData?.side_selections ? casinoApiData?.side_selections : {}
+  let gameType = casinoApiData.game_type
+  let status = casinoApiData.status
 
+  let roundId = casinoApiData.round_id ? casinoApiData.round_id : ""
+  let betFor = bodyData.betFor
+  let sid = bodyData.sid ? bodyData.sid  : ""
+  let selectionType = bodyData.selectionType ? bodyData.selectionType : "main"
+  let selectionData = {}
+
+
+  if (selectionType === "side") {
+      selectionData = sideSelections
+  } else {
+      selectionData = selections
+  }
+      
+  let selectionDataConverted = convertKeyObject(selectionData, "name")
+
+  let selectionIdData = selectionDataConverted[sid] ? selectionDataConverted[sid] : {}
+
+  if (!selectionIdData) {
+    return returnResponse("error", "selectionIdData Not Found ! Please Insert Odds Data");
+  } 
+
+
+  let backData = selectionIdData.back ? selectionIdData.back : []
+  let layData = selectionIdData.lay ? selectionIdData.lay : []
+  let layBackType = bodyData.layBackType
+
+  let bettingPhase = selectionIdData.runner_status == "IN PLAY" ? true : false
+
+
+  if (!bettingPhase) {
+    return returnResponse("error", "Round Closed Please Try After Next Round");
+  }
+
+  let odds = 0
+  if (layBackType == "back") {
+    backData = backData[0] ? backData[0] : {}
+    odds = backData.price ? backData.price : 0
+    odds = odds > 0 ? Number(odds.toFixed(2)) : 0
+  }
+
+  if (layBackType == "lay") {
+    layData = layData[0] ? layData[0] : {}
+    odds = layData.price ? layData.price : 0
+    odds = odds > 0 ? Number(odds.toFixed(2)) : 0
+  }
+
+  let rate = odds
+  let nat = casinoApiData.name ? casinoApiData.name : ""
+  let type = layBackType
+  casinoApiData.sid = sid
+  casinoApiData.nat = nat
+
+
+  if(!odds || odds <= 0 || odds == Infinity || isNaN(odds) || odds == 0 || odds ==null || odds < 0 )   {
+    return returnResponse("error", "Odds Expired Please Try After Some Time");
+  }
+  
+
+  let returnObj = {
+    sid: sid,
+    roundId: roundId,
+    nat: nat,
+    rate: odds,
+    casinoType: gameType,
+    betKey: sid,
+    amount: bodyData.amount,
+    oddsFinalData: casinoApiData,
+    betFor: betFor,
+    allOddsData: selectionData,
+    selectionData : selectionIdData
+  };
+
+  await client.sadd(`betfairCasinoRoundId`, roundId);
+  return returnResponse("success", "Odds Matched", returnObj);
+};
+
+
+const getBetfairCasinoPositionVirtual = async (betsData, selectionData) => {
+  let positionArray = {};
+  let amountPos = [];
+
+  selectionData.map((odds, oddsKey) => {
+    let posAmount = 0;
+    let oddsSelectionId = odds?.name;
+    betsData.map((bets) => {
+      const type = bets.betType;
+      const betAmount = parseFloat(bets.amount);
+      const betSelectionId = bets.sid;
+      let betOdds = parseFloat(bets.odds - 1);
+      if (type == "K" && betSelectionId == oddsSelectionId) {
+        posAmount += -1 * betAmount * parseFloat(betOdds);
+      }
+      if (type == "K" && betSelectionId != oddsSelectionId) {
+        posAmount += betAmount;
+      }
+      if (type == "L" && betSelectionId == oddsSelectionId) {
+        posAmount += betAmount * betOdds;
+      }
+      if (type == "L" && betSelectionId != oddsSelectionId) {
+        posAmount += -1 * betAmount;
+      }
+    });
+
+    positionArray[oddsSelectionId] = posAmount.toFixed(2);
+    amountPos.push(posAmount.toFixed(2));
+  });
+
+
+
+  let returnArray = { positionArray, amountPos };
+
+  return returnArray;
+};
 
 
 module.exports = {
@@ -2613,5 +2731,7 @@ module.exports = {
   generateDiamondCasinoLedger,
   checkVirtualOdds,
   createDiammondLedgerByCricTransaction,
-  getCasinoPositionVirtual
+  getCasinoPositionVirtual,
+  checkBetfairCasinoOdds,
+  getBetfairCasinoPositionVirtual
 };

@@ -261,14 +261,19 @@ const userListNew = async (req, res) => {
       for (let index = 0; index < users.length; index++) {
         const element = users[index];
         userIds.push(new ObjectId(element.userId))
+
         let findUserId = new ObjectId(element.userId)
         let findUserType = element.userType
         let cretorUserType = element?.creatorShareData?.userType
+
+        let ledgerMatch = {
+                   [`${findUserType}Id`]:findUserId
+        }
+
+
         let ledgerAgg = await crickTransaction.aggregate([
               {
-                $match: {
-                   [`${findUserType}Id`]:findUserId
-                }
+                $match: ledgerMatch
               },
               {
                 $group: {
@@ -315,7 +320,7 @@ const userListNew = async (req, res) => {
                     $sum: {
                       $cond: [
                         { $eq: ["$transactionType", "profitLoss"] },
-                        "$clientProfitLoss",
+                        "$amount",
                         0
                       ]
                     }
@@ -326,6 +331,8 @@ const userListNew = async (req, res) => {
               ]);
     
         
+        //_d(ledgerAgg[0], "ledgerAgg")
+
         ledgerMap[ledgerAgg[0]?._id] = ledgerAgg[0];
 
 

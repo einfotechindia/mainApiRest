@@ -40,6 +40,8 @@ const {
   getShareChainData
 } = require("../../Helpers/UsersUtils");
 
+const { emitToUser } =  require("../../socket.js")
+
 const DiamondCasinoService = require("../../Services/DiamondCasino/DiamondCasino.service");
 axios.defaults.timeout = 1000;
 const Joi = require("joi");
@@ -461,10 +463,7 @@ const betsResultOfClient = async (req, res) => {
       where.roundId = { $in: req.body.declaredRoundIdArray };
     }
 
-
-
     const betData = await casinoBetModel.find(where);
-
 
     if (!betData || betData.length === 0) {
       await client.del(`redisBetsResultOfClient`);
@@ -4773,6 +4772,273 @@ const saveResultRedisVirtual = async (req, res) => {
 };
 
 
+
+const saveBetfairCasinoResults = async (req, res) => {
+  try {
+    let bodyData = {}
+    if (req && req.body) {
+      bodyData = req.body;
+    }
+
+    let betfairUndeclareRoundId =
+      req?.body?.roundIdArray?.length > 0
+        ? req.body.roundIdArray
+        : await client.smembers("betfairCasinoRoundId");
+    
+    
+    _d(betfairUndeclareRoundId , "betfairUndeclareRoundId")
+
+    if (bodyData.isDatabase) {
+      let undeclaredRound = await casinoBetModel.aggregate([
+        {
+          $match: {
+            isDeclare: 0,
+            isPartiallyDeclare: 0,
+            isDeleted: false,
+            isBetfairCasino : true
+          },
+        },
+        {
+          $group: {
+            _id: "$roundId",
+          },
+        },
+        {
+          $project: {
+            _id: 1,
+            casinoType: 1,
+          },
+        },
+        {
+          $sort: {
+            _id: 1,
+          },
+        },
+      ]);
+      undeclaredRound.map((data) => {
+        betfairUndeclareRoundId.push(data._id);
+      });
+    }
+    
+
+    if (!betfairUndeclareRoundId?.length) {
+      return res ? SendResponse(res, "success", "No undeclared round IDs") : [];
+    }
+
+    const hitUrl = process.env.BETFAIR_CASINO_RESULT_URL;
+    if (!hitUrl) {
+      return res ? SendResponse(res, "error", "Cache URL not found") : [];
+    }
+
+    /* ---------------- FETCH RESULTS IN PARALLEL ---------------- */
+        const apiResults = await Promise.allSettled(
+        betfairUndeclareRoundId.map((roundId) => {
+          let payload = { roundId: String(roundId) };
+          return axios.post(hitUrl, payload);
+        })
+      );
+
+
+    const roundResultsMap = {};
+    const successRoundIds = [];
+
+    for (let i = 0; i < apiResults.length; i++) {
+      const resObj = apiResults[i];
+      if (resObj.status === "fulfilled" && resObj.value?.data?.data) {
+        const data = resObj.value.data.data;
+        let parseData = data.data
+        parseData = JSON.parse(parseData)
+        let selectionData = parseData.selections
+        let eventStatus = parseData?._pro.evt_status
+        let winnerSelectionIdArray = []
+        if (eventStatus == "SUSPENDED_GAME_SETTLING") {
+          selectionData.map((sdata) => {
+            if (sdata.runner_status == "WINNER") {
+              winnerSelectionIdArray.push(sdata.name)
+            }
+          })
+        }
+
+        if (winnerSelectionIdArray.length > 0) {
+          data['winnerSelectionIdArray'] = winnerSelectionIdArray
+          roundResultsMap[data.roundId] = data;
+          successRoundIds.push(data.roundId);
+        }
+
+      }
+    }
+    if (!successRoundIds.length) {
+      return res ? SendResponse(res, "success", "No valid results received") : [];
+    }
+
+    /* ---------------- FETCH BET DATA ---------------- */
+    const roundBetData = await casinoBetModel.find(
+      {
+        roundId: { $in: successRoundIds },
+      }
+    );
+
+    const bulkUpdates = [];
+    const transactionLogs = [];
+    const crickTransactionLogObj = [];
+    const betIdArray = []
+    const statementLog = [];
+    const userIdArray = [];
+    const redisCleanupSet = new Set();
+
+    for (const bet of roundBetData) {
+      let  resultData = roundResultsMap[bet.roundId+""];
+      if (!resultData) continue;
+      let winnerSelectionIdArray = resultData.winnerSelectionIdArray
+      resultData = JSON.parse(resultData.data)
+      let profit = bet.profit
+      let lossAmount = -1 * Math.abs(bet.amount);
+      let profitLoss = lossAmount
+      let betId = bet._id
+      let roundId = bet.roundId
+      if (winnerSelectionIdArray.includes(bet.sid)) {
+        profitLoss = profit
+      }
+      betIdArray.push(betId)
+      userIdArray.push(bet.userId)
+      const directShareData = await getShareChainData(bet.clientId);
+
+      const transaction = {
+        amount: profitLoss,
+        clientProfitLoss: profitLoss,
+        marketId: bet.roundId,
+        eventId: bet.eventId,
+        sportId: 1000000,
+        seriesId: bet.eventId,
+        gameName: `betfairCasino`,
+        gameType: "avaitor",
+        marketType: "diamondCasino",
+        selectionId: bet.roundId,
+        remarks: `betfairCasino-(${_date()})`,
+        userId: bet.clientId,
+        ownerId: bet.ownerId,
+        subownerId: bet.subownerId,
+        superadminId: bet.superadminId,
+        adminId: bet.adminId,
+        subadminId: bet.subadminId,
+        masterId: bet.masterId,
+        superagentId: bet.superagentId,
+        agentId: bet.agentId,
+        betId : betId
+      };
+
+      if (directShareData) {
+        for (const share of directShareData) {
+          transaction[`${share.creatorUserType}LedgerAmount`] =
+            (share[`${share.creatorUserType}LedgerCasinoShare`] * profitLoss) / 100;
+          transaction[`${share.creatorUserType}ProfitLoss`] =
+            (share[`${share.creatorUserType}ProfitLossrCasinoShare`] * profitLoss) / 100;
+        }
+      }
+
+      transactionLogs.push(transaction);
+
+      if (directShareData) {
+        let crickInsertAmount = profitLoss
+        let casinoRemark = `betfairCasino - ${bet.casinoType} / -(${_date()})`;
+
+        let crickPushTransactionLog = {
+          amount: crickInsertAmount,
+          clientProfitLoss: crickInsertAmount,
+          marketId: roundId,
+          eventId: `${bet.eventId}-${_date()}`,
+          sportId: 1000000,
+          seriesId: bet.eventId,
+          gameName: "casino",
+          transactionType: "profitLoss",
+          gameType: bet.casinoType,
+          marketType: "betfairCasino",
+          selectionId: bet.sid,
+          remarks: casinoRemark,
+          userId: bet.userId,
+          ownerId: bet.ownerId,
+          subownerId: bet.subownerId,
+          superadminId: bet.superadminId,
+          adminId: bet.adminId,
+          subadminId: bet.subadminId,
+          masterId: bet.masterId,
+          superagentId: bet.superagentId,
+          agentId: bet.agentId,
+          clientId: bet.userId,
+          eventName: `${bet.casinoType}-(${_date()})`,
+          betId : betId
+        };
+
+        directShareData.map((directShare) => {
+          crickPushTransactionLog[`${directShare.creatorUserType}LedgerAmount`] = directShare[`${directShare.creatorUserType}LedgerCasinoShare`] * crickInsertAmount / 100
+          crickPushTransactionLog[`${directShare.creatorUserType}ProfitLoss`] = directShare[`${directShare.creatorUserType}ProfitLossrCasinoShare`] * crickInsertAmount / 100
+        })
+
+        crickTransactionLogObj.push(crickPushTransactionLog);
+
+      }
+
+      bulkUpdates.push({
+        updateMany: {
+          filter: { _id : bet._id },
+          update: {
+            $set: {
+              isDeclare: 1,
+              isPartiallyDeclare: 1,
+              profitLoss: profitLoss,
+              result: String(resultData.community_cards),
+              showResult: String(resultData.community_cards),
+            },
+          },
+        },
+      });
+
+      redisCleanupSet.add(bet.roundId);
+    }
+
+
+
+
+    userIdArray.forEach(async (userId) => {
+        await emitToUser(`betUpdate`, {status : true } , userId)
+    })
+
+    
+
+    let crickWhere = {
+      marketType: "betfairCasino",
+      betId : {$in : betIdArray}
+    }
+
+    let transactionLogWhere = {
+      betId: { $in: betIdArray },
+      gameName: `betfairCasino`,
+    }
+
+    await Promise.allSettled([
+      crickTransactionLog.deleteMany(crickWhere),
+      TransactionLogModel.deleteMany(transactionLogWhere),
+    ]);
+
+    /* ---------------- EXECUTE DB OPS IN PARALLEL ---------------- */
+    await Promise.allSettled([
+      TransactionLogModel.length && TransactionLogModel.insertMany(transactionLogs),
+      crickTransactionLog.length && crickTransactionLog.insertMany(crickTransactionLogObj),
+      bulkUpdates.length && casinoBetModel.bulkWrite(bulkUpdates, { ordered: false }),
+      client.srem("betfairCasinoRoundId", ...Array.from(redisCleanupSet)),
+    ]);
+
+    return res
+      ? SendResponse(res, "success", "Result saved successfully")
+      : successRoundIds;
+
+  } catch (error) {
+    _d("❌ saveAvaitorResults error:", error);
+    if (res) return SendResponse(res, "error", "Internal server error");
+    throw error;
+  }
+};
+
 module.exports = {
   betsResultOfClient,
   saveResult,
@@ -4786,5 +5052,6 @@ module.exports = {
   saveAvaitorResults,
   saveCasinoLedgerByDateByCrickTransaction,
   saveResultRedisVirtual,
-  newGenerateDiamondLedger
+  newGenerateDiamondLedger,
+  saveBetfairCasinoResults
 };

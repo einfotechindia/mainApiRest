@@ -25,7 +25,7 @@ const internationalCasinoBet = require("../../Models/BetsList/InternationalCasin
 const { ObjectId } = require("mongodb");
 var requestIp = require("request-ip");
 const Joi = require("joi");
-const { emitToAllActiveUsers } =  require("../../socket.js")
+const { emitToAllActiveUsers , emitToUser } =  require("../../socket.js")
 const BetService = require("../../Services/Sports/Bet.service");
 
 const {
@@ -579,6 +579,28 @@ const [insertBetData, marketCoins, BetServicesData ,oddsPositionResult] = await 
       }
     }
 
+
+  try {
+      if (directUserShareData) {
+        await Promise.allSettled(
+          directUserShareData.map((data) =>
+            emitToUser(
+              "betUpdate",
+              JSON.stringify(insertBet),
+              data?.userUserId
+            )
+          )
+        );
+      }
+    }
+     catch (e) {
+      console.log(
+        e,
+        "problem with through socket for updating bet in admin panels"
+      );
+    }
+    
+
     return SendResponse(
       res,
       "success",
@@ -931,6 +953,32 @@ const sessionBetPlaced = async (req, res) => {
     await client.set(`lastBetTimeUser__${userId}`, timestamp);
     await client.del(`${userData.userId}_fancyData_${marketId}`);
 
+
+
+   // _d(directUserShareData, "directUserShareData")
+    
+    try {
+      if (directUserShareData) {
+        await Promise.allSettled(
+          directUserShareData.map((data) =>
+
+            
+            emitToUser(
+              "betUpdate",
+              JSON.stringify(insertFancyBet),
+              data?.userUserId
+            )
+          )
+        );
+      }
+    }
+     catch (e) {
+      console.log(
+        e,
+        "problem with through socket for updating bet in admin panels"
+      );
+    }
+
     return SendResponse(
       res,
       "success",
@@ -1016,6 +1064,8 @@ const matchList = async (req, res) => {
       }
     }
   }
+
+
 
   return SendResponse(res, "success", total , matchList);
 };
@@ -2586,6 +2636,27 @@ const meterKhadoOddEvenCricketCassinoBetPlace = async (req, res) => {
     await client.set(`lastBetTimeUser__${userId}`, timestamp);
     await client.del(`${userData.userId}_fancyData_${marketId}`);
 
+
+  try {
+      if (directUserShareData) {
+        await Promise.allSettled(
+          directUserShareData.map((data) =>
+            emitToUser(
+              "betUpdate",
+              JSON.stringify(insertFancyBet),
+              data?.userUserId
+            )
+          )
+        );
+      }
+    }
+     catch (e) {
+      console.log(
+        e,
+        "problem with through socket for updating bet in admin panels"
+      );
+    }
+
     return SendResponse(
       res,
       "success",
@@ -3284,6 +3355,26 @@ const [insertBetData, marketCoins, BetServicesData ,oddsPositionResult] = await 
             isDeclare : 0
         })
       }
+    }
+
+  try {
+      if (directUserShareData) {
+        await Promise.allSettled(
+          directUserShareData.map((data) =>
+            emitToUser(
+              "betUpdate",
+              JSON.stringify(multiBetArrayData),
+              data?.userUserId
+            )
+          )
+        );
+      }
+    }
+     catch (e) {
+      console.log(
+        e,
+        "problem with through socket for updating bet in admin panels"
+      );
     }
 
     return SendResponse(

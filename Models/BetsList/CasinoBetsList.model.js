@@ -81,6 +81,10 @@ let CasinoBetListSchema = new Schema({
     type: Boolean,
     default: false,
   },
+   isBetfairCasino: {
+    type: Boolean,
+    default: false,
+  },
   isDeleted: {
     type: Boolean,
     default: false,

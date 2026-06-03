@@ -10,14 +10,10 @@ const {
   _dx,
   _d,
   convertKeyObject,
-  convertObjectToArray,
   whereHelper,
   dateWhereCond,
-  _date,
-  getMondayRange,
-  throughSocketDataByAxios,
   _date_time,
-  parseFilterDate
+  detectIsTime
 } = require("../../Helpers/CommonHelper");
 const {
   getShareDataByUserId,
@@ -152,9 +148,20 @@ const profitLossrepostByGameWise = async (req, res) => {
     where[`${userType}Id`] = new ObjectId(userId)
 
 
-    if (bodyData.fromDate && bodyData.toDate) {
-      where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
-    }
+    // if (bodyData.fromDate && bodyData.toDate) {
+    //   where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+    // }
+
+
+     if (bodyData.fromDate && bodyData.toDate) {
+            const isTime = detectIsTime(bodyData.fromDate, bodyData.toDate);
+            const dateWhere = await dateWhereCond(bodyData.fromDate, bodyData.toDate, false, isTime);
+            if (isTime) {
+             where.createdAt = dateWhere;
+            } else {
+              where.date = dateWhere;  
+            }
+      }
 
     if (bodyData.isComm) {
       where.isComm = bodyData.isComm
@@ -302,10 +309,20 @@ const profitLossAccordingToDate = async (req, res) => {
       [loginUserType + "Id"]: new ObjectId(loginUserId)
     }
 
-    if (bodyData.fromDate && bodyData.toDate) {
-      crickWhere.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
-    }
+    // if (bodyData.fromDate && bodyData.toDate) {
+    //   crickWhere.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+    // }
 
+
+     if (bodyData.fromDate && bodyData.toDate) {
+            const isTime = detectIsTime(bodyData.fromDate, bodyData.toDate);
+            const dateWhere = await dateWhereCond(bodyData.fromDate, bodyData.toDate, false, isTime);
+            if (isTime) {
+             crickWhere.createdAt = dateWhere;
+            } else {
+              crickWhere.date = dateWhere;  
+            }
+      }
 
     let selfProfitLoss = await crickTransaction.aggregate([
       {
@@ -364,6 +381,7 @@ const commissionReport = async (req, res) => {
       loginUserType = bodyData.userType
     }
     let dateWhere = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+
     let directUserData = await gettingDirectUserByUserId(loginUserId);
     let userCount = directUserData.idArrayData ? directUserData.idArrayData.length : 0
 
@@ -378,6 +396,7 @@ const commissionReport = async (req, res) => {
         let userId = userData.userId
         let userType = userData.userType
         where[userType + "Id"] = userId
+        
         where.date = dateWhere
 
         let group = {
@@ -898,9 +917,20 @@ let bookDetails1 = async (req, res) => {
     let totalQuery = {};
     query = whereHelper(loggedUserData);
     let userData = await gettingDirectUserByUserId(userId, query)
+    // if (bodyData.fromDate && bodyData.toDate) {
+    //   query.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+    // }
+
     if (bodyData.fromDate && bodyData.toDate) {
-      query.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+            const isTime = detectIsTime(bodyData.fromDate, bodyData.toDate);
+            const dateWhere = await dateWhereCond(bodyData.fromDate, bodyData.toDate, false, isTime);
+            if (isTime) {
+             query.createdAt = dateWhere;
+            } else {
+              query.date = dateWhere;
+            }
     }
+    
     let userDataObj = userData?.userDataArray
     let userIdArray = userData?.idArrayData
     let finalLedgerData = []
@@ -910,9 +940,7 @@ let bookDetails1 = async (req, res) => {
       isFinalSheet = bodyData.isFinalSheet
     }
 
-
     let totalCash = 0
-
     for (const [id, userData] of Object.entries(userDataObj)) {
       let fetchUserId = id
       let fetchUserType = userData.userType
@@ -921,9 +949,20 @@ let bookDetails1 = async (req, res) => {
         [fetchUserType + "Id"]: new ObjectId(fetchUserId),
       }
 
+
       if (bodyData.fromDate && bodyData.toDate) {
-        crickWhereObj.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+            const isTime = detectIsTime(bodyData.fromDate, bodyData.toDate);
+            const dateWhere = await dateWhereCond(bodyData.fromDate, bodyData.toDate, false, isTime);
+            if (isTime) {
+             crickWhereObj.createdAt = dateWhere;
+            } else {
+              crickWhereObj.date = dateWhere;  
+            }
       }
+      
+      // if (bodyData.fromDate && bodyData.toDate) {
+      //    crickWhereObj.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+      // }
 
       if (bodyData.gameType) {
         crickWhereObj.gameType = bodyData.gameType
@@ -1068,10 +1107,20 @@ let bookDetails1 = async (req, res) => {
     }
 
 
-    if (bodyData.fromDate && bodyData.toDate) {
-      selfWhere.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
-    }
+    // if (bodyData.fromDate && bodyData.toDate) {
+    //   selfWhere.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+    // }
 
+
+    if (bodyData.fromDate && bodyData.toDate) {
+            const isTime = detectIsTime(bodyData.fromDate, bodyData.toDate);
+            const dateWhere = await dateWhereCond(bodyData.fromDate, bodyData.toDate, false, isTime);
+            if (isTime) {
+             selfWhere.createdAt = dateWhere;
+            } else {
+              selfWhere.date = dateWhere;  
+            }
+      }
 
     if (bodyData.gameType) {
       selfWhere.gameType = bodyData.gameType
@@ -1319,9 +1368,20 @@ const bpexchAccountStatement = async (req, res) => {
     }
 
 
-    if (bodyData.fromDate && bodyData.toDate) {
-      where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
-    }
+    // if (bodyData.fromDate && bodyData.toDate) {
+    //   where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+    // }
+
+
+      if (bodyData.fromDate && bodyData.toDate) {
+            const isTime = detectIsTime(bodyData.fromDate, bodyData.toDate);
+            const dateWhere = await dateWhereCond(bodyData.fromDate, bodyData.toDate, false, isTime);
+            if (isTime) {
+             where.createdAt = dateWhere;
+            } else {
+              where.date = dateWhere;  
+            }
+      }
 
     if (bodyData.marketId) {
       where.marketId = bodyData.marketId
@@ -1533,9 +1593,20 @@ const bpexchClientStatement = async (req, res) => {
       where.transactionType = bodyData.transactionType;
     }
 
-    if (bodyData.fromDate && bodyData.toDate) {
-      where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
-    }
+    // if (bodyData.fromDate && bodyData.toDate) {
+    //   where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+    // }
+
+
+     if (bodyData.fromDate && bodyData.toDate) {
+            const isTime = detectIsTime(bodyData.fromDate, bodyData.toDate);
+            const dateWhere = await dateWhereCond(bodyData.fromDate, bodyData.toDate, false, isTime);
+            if (isTime) {
+             where.createdAt = dateWhere;
+            } else {
+              where.date = dateWhere;  
+            }
+      }
 
     if (bodyData.marketId) {
       where.marketId = bodyData.marketId
@@ -1840,30 +1911,30 @@ const depositCredit = async (req, res) => {
     const loginData = req.loggedInUser;
     let userId = bodyData.userId
     let isCash = false
+
     if (bodyData.isCash) {
       isCash = bodyData.isCash
     }
+
     let userWhere = await whereHelper(loginData, {
       userId: new ObjectId(userId),
       status: 1,
       isDeleted: false,
     })
 
-    let checkTpinByDatabase = await checkTpin(req)
 
-
-
-    if (checkTpinByDatabase) {
-      if (!bodyData.tpin) {
-        return SendResponse(res, "error", "Tpin Is Required");
-      }
-
-      if (bodyData.tpin != checkTpinByDatabase) {
-        return SendResponse(res, "error", "Tpin Is Incorrect");
-      }
-    }
-
-
+       let checkTpinByDatabase = await checkTpin(req)
+        if (checkTpinByDatabase.status) {
+          if (!bodyData.tpin) {
+            return SendResponse(res, "error", "Tpin Is Required");
+          }
+    
+          if (bodyData.tpin != checkTpinByDatabase.tpin) {
+            return SendResponse(res, "error", "Tpin Is Incorrect");
+          }
+        }
+    
+    
 
     let userData = await userModel.findOne(
       userWhere,
@@ -1949,14 +2020,12 @@ const depositCredit = async (req, res) => {
       creatorCashCredit = creatorCashCredit[0]
     }
 
-
     let userCredit = userCashCredit.creditRemaining ? userCashCredit.creditRemaining : 0
 
     let userCash = userCashCredit.cash ? userCashCredit.cash : 0
     let userProfitLoss = userCashCredit.profitLoss ? userCashCredit.profitLoss : 0
 
     let creatorCredit = creatorCashCredit.creditRemaining ? creatorCashCredit.creditRemaining : 0
-
     let creatorCash = creatorCashCredit.cash ? creatorCashCredit.cash : 0
     let creatorProfitLoss = creatorCashCredit.profitLoss ? creatorCashCredit.profitLoss : 0
 
@@ -1968,7 +2037,7 @@ const depositCredit = async (req, res) => {
     if (isCash) {
       creatorCoins = creatorCash + creatorCredit
       userCoins = userCash + userCredit
-    } else {
+    }  else {
       creatorCoins = creatorCredit
       let totalCash = creatorCashCredit.cashGive - creatorCashCredit.cashTaken
       if(totalCash > 0) {
@@ -2001,14 +2070,7 @@ const depositCredit = async (req, res) => {
     coins = coins ? Number(coins) : 0;
     userCoins = userCoins ? Number(userCoins) : 0;
     
-
-    _d(coins , "coins")
-    _d(userCoins , "userCoins")
-    _d(creatorCoins, "creatorCoins")
     
-        _d(userCashCredit , "userCashCredit")
-    _dx(creatorCashCredit, "creatorCashCredit")
-
   
     if (coins < 0 && updateCoinsWithoutSign > userCoins) {
       return SendResponse(
@@ -2023,9 +2085,6 @@ const depositCredit = async (req, res) => {
         return SendResponse(res, "error", `User doesn't have sufficient coins only ${creatorCoins} can`);
       }
     }
-
-
-
 
 
     let creatorDepositWithdrawType = `${isCash ? "cash" : "credit"} deposit to ${userData.username}`;
@@ -2158,7 +2217,6 @@ const depositCredit = async (req, res) => {
 }
 
 
-
 const MaxProfitLossByUserWise = async (req, res) => {
   let bodyData = req.body;
   const loginData = req.loggedInUser;
@@ -2287,12 +2345,15 @@ const checkTpin = async (req, res)=>{
      }
 
 
+     let returnData = {
+       tpin: data.tpin,
+       status : tpin
+      }
+
      if (res) {
-       return SendResponse(res, "success", tpin, {
-          tpin : tpin
-        });
+       return SendResponse(res, "success", tpin, returnData);
      }else{
-       return tpin
+       return returnData
      }
      
 

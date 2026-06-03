@@ -6,7 +6,8 @@ const {
   saveResultRedis,
   saveAvaitorResults,
   generateDiamondLedger,
-  saveResultRedisVirtual
+  saveResultRedisVirtual,
+  saveBetfairCasinoResults
 } = require("./Controllers/diamondCasino/diamondResult.Controller");
 const { saveSportsList } = require("./Services/Sports/Bet.service");
 const {
@@ -85,6 +86,15 @@ cron.schedule("*/60 * * * * *", async () => {
   await saveResultRedisVirtual();
 });
 
+cron.schedule("*/15 * * * * *", async () => {
+  console.log("Running cron job for saveBetfairCasinoResults... at every 15 sec");
+  await saveBetfairCasinoResults();
+});
+
+
+
+
+
 cron.schedule("*/1 * * * *", () => {
   console.log("[diamond-ledger] Cron tick (every 1 minute)");
   runGenerateDiamondLedger("cron"); // do NOT await inside schedule callback
@@ -109,7 +119,7 @@ cron.schedule("*/1 * * * *", () => {
 //   await distributeBonusToUpperline();
 // });
 
-// cron.schedule("*/30 * * * * *", async () => {
-//   console.log("Running cron job... at every 5 sec");
-//   await saveAvaitorResults();
-// });
+cron.schedule("*/30 * * * * *", async () => {
+  console.log("Running cron job... at every 5 sec");
+  await saveAvaitorResults();
+});
