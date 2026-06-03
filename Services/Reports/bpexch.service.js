@@ -817,7 +817,6 @@ const checkExposuerForUsers = async (req, res) => {
         };
           
 
-
       let resData = await TransactionLogModel.aggregate([
       {
         $match: sessionWhereQuery,

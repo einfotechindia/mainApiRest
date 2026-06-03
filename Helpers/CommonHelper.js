@@ -631,6 +631,11 @@ const fancyCommissionHelper = (
     subownerComm: 0,
     ownerComm: 0,
   };
+
+
+  
+
+
   if (matchShareArray.clientCommissionType == "BetByBet") {
     returnData.clientComm = Math.round(
       (sessionTurnOver * matchShareArray.clientSessionCommission) / 100
@@ -818,6 +823,7 @@ const betfairFancyCommissionHelper = (
       returnData.clientComm = -1 * Math.round(
         (profitLoss * matchShareArray.clientBetfairCommission) / 100
       );
+    
     for (let index = 0; index < directShareData.length; index++) {
       const element = directShareData[index];
           returnData[`${element.creatorUserType}Comm`] = +(-1 * ((Math.abs(profitLoss) * matchShareArray[`${element.creatorUserType}BetfairCommission`]))/100).toFixed(2)
@@ -826,8 +832,8 @@ const betfairFancyCommissionHelper = (
           returnData[`${element.creatorUserType}ProfitLossSessionComm`] =
            +(-1 *  ((Math.abs(profitLoss) * element[`${element.creatorUserType}ProfitLossBetfairComm`])) / 100).toFixed(2)
         }
-
   }
+
   return returnData;
 };
 
