@@ -202,7 +202,7 @@ const SportListSchema = new mongoose.Schema(
     tossRate: {
       type: Number,
       default: 0,
-      min: [0, 'Toss rate cannot be less than 0'],  
+      min: [0, 'Toss rate cannot be less than 0'],
       max: [1, 'Toss rate cannot be greater than 1']
     },
     maxProfitBookmaker: {
@@ -228,7 +228,7 @@ const SportListSchema = new mongoose.Schema(
     date: {
       type: String,
       default: () => moment().unix() * 1000,
-     
+
     },
   },
   {

@@ -37,7 +37,8 @@ const {
   parentDataAppend,
   dateWhereCond,
   _date,
-  gameBetValidaterRedis
+  gameBetValidaterRedis,
+  sleep
 } = require("../../Helpers/CommonHelper");
 const { emitToUser } =  require("../../socket.js")
 
@@ -2831,11 +2832,6 @@ const redeclareRoundId = async (req, res) => {
     isDeclare : 0
   }
 
-
-
-
-
-  
   var resData = await casinoBetModel.updateMany(playWhere , updateObj);
   return SendResponse(res, "success", `Decision reclared successsfully ${bodyData.roundId}` , resData);
 };
@@ -3360,13 +3356,13 @@ const casinoBetfairBetPlace = async (req, res) => {
     DiamondCasinoService.checkCasinoData(bodyData)
   ])
 
-  if(!setRedisKeyForBet){
-    return SendResponse(res, "error", `Please wait for a moment before placing another bet`);
-  }
+  // if(!setRedisKeyForBet){
+  //   return SendResponse(res, "error", `Please wait for a moment before placing another bet`);
+  // }
 
-  if (!timerCheck) {
-    return SendResponse(res, "error", "odds expired due to instant bet");
-  }
+  // if (!timerCheck) {
+  //   return SendResponse(res, "error", "odds expired due to instant bet");
+  // }
 
   if (casinoData.status == "error") {
     return SendResponse(res, "error", casinoData.message);
@@ -3417,12 +3413,17 @@ const casinoBetfairBetPlace = async (req, res) => {
     }
     else {
       return SendResponse(res, "error", `Fetch Cache data Error In Live Data`);
+   }
+    
+    
+    
+    
+    if (casinoData.betDelay && casinoData.betDelay != 0) {
+       await sleep(casinoData.betDelay * 1000);
     }
 
 
     let finalOddsData = checkOddsCasinoData?.data;
-
-
 
     finalOddsData.amount = betAmount;
 
@@ -3605,9 +3606,8 @@ const casinoBetfairBetPlace = async (req, res) => {
       marketId: roundId,
       gameType: "betfairCasino",
       gameName: `${casinoType}-${betFor}`,
-      userType: "client",
-      remarks : "betfairCasino"
     });
+    
 
     let shareData = await getShareDataByUserId(userId);
     shareData = shareData.shareData;
@@ -3637,7 +3637,7 @@ const casinoBetfairBetPlace = async (req, res) => {
 
     if(updateCoins.totalCoins < 0 ){
         let logData = {
-          gameType: "diamondCasino",
+          gameType: "betfairCasino",
           gameName: `betfairCasino`,
           userType: "client",
           userId: userId,
@@ -3653,9 +3653,7 @@ const casinoBetfairBetPlace = async (req, res) => {
         await TransactionLogModel.deleteOne({
           userId: userId,
           marketId: roundId,
-          gameType: "diamondCasino",
-          gameName: `betfairCasino`,
-          userType: "client",
+          gameType: "betfairCasino",
         });
 
       await insertTransactionLogCasino(clientData, logData, shareData);
@@ -3685,7 +3683,7 @@ const casinoBetfairBetPlace = async (req, res) => {
     return SendResponse(
       res,
       "error",
-      `Something Went Wrong In Casino Bet Place For ${casinoType} in casinoBetPlace`,
+      `Something Went Wrong In Casino Bet Place For in casinoBetPlace`,
       error
     );
   }finally {

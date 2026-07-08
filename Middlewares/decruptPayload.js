@@ -39,6 +39,7 @@ const decruptData = async (req, res, next) => {
         if (diffInSeconds > 30) {
            returnStatus = true
         }
+          console.log(JSON.stringify(req.body), "req.bodyddd")
 
         if (res && returnStatus) {
             return res.status(400).json({
@@ -48,11 +49,12 @@ const decruptData = async (req, res, next) => {
             });
         }
         
-       // console.log(req.body, "req.bodyddd")
+     
         
         req.body.returnStatus = returnStatus
       } else {
         req.body = { returnStatus: true }
+        
         if (res) {
             return res.status(400).json({
               message: "Unauthorised Request",

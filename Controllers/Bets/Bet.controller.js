@@ -116,6 +116,8 @@ const oddBetPlaced = async (req, res) => {
 
     const checkOdds = await BetService.checkLiveMatchOdds(bodyData, userRate);
 
+    
+
     if (checkOdds.status == "error") {
       return SendResponse(res, "error", checkOdds.message);
     }
@@ -170,10 +172,16 @@ const oddBetPlaced = async (req, res) => {
 
 
     const oddsType = bodyData.oddsType;
+
     if (betfairMarketList.includes(oddsType)) {
       bodyData.odds = (bodyData.odds - 1).toFixed(2);
       bodyData.odds = bodyData.type=="L" ? liveOdds.lgaai : liveOdds.khaai
     }
+
+    if (oddsType == "bookmaker") {
+      bodyData.odds = (bodyData.type == "L" || bodyData.type == "l")  ? liveOdds[selectionId]?.lgaai : liveOdds[selectionId]?.khaai
+    }
+
 
     oldMatchBet = await BetModel.find(
       {
@@ -292,7 +300,6 @@ const oddBetPlaced = async (req, res) => {
       userId: userData.userId,
       odds: bodyData.odds,
       selectionId: selectionId,
-      odds: bodyData.odds,
       teamName: teamName,
       oddsType: bodyData.oddsType,
       type: bodyData.type,
@@ -677,12 +684,20 @@ const sessionBetPlaced = async (req, res) => {
     const startTime = Date.now();
 
     sessionData = checkOdds.data.liveOdds;
+
+
+
+
+   
+
     const selectionId = bodyData.selectionId
     const type = bodyData.type;
     const matchData = checkOdds.data.matchData;
-
     const odds = bodyData.odds;
     const amount = bodyData.amount;
+
+    bodyData.run = type == "Y" ? (sessionData.runsYes ?sessionData.runsYes : bodyData.run ) : (sessionData.runsNo ?sessionData.runsNo : bodyData.run )
+
     const run = bodyData.run;
 
 
@@ -1071,8 +1086,6 @@ const matchList = async (req, res) => {
 };
 
 const sportByMarketId = async (req, res) => {
-
-  
   const bodyData = req.body;
   const marketId = bodyData.marketId;
   matchData = await BetService.sportByMarketId(marketId);
@@ -2291,9 +2304,13 @@ const insertBetfairMarket = async (req, res) => {
     return SendResponse(res, "error", "event Id is Required");
   }
   
+
   let eventId = bodyData.eventId;
   const returnData = await BetService.insertBetfairMarket(eventId);
-  return SendResponse(res, returnData.status, returnData.message , returnData);
+  return SendResponse(res, returnData.status, returnData.message, returnData);
+  
+
+  
 };
 
 const marketReload = async (req, res) => {
@@ -3395,6 +3412,24 @@ const [insertBetData, marketCoins, BetServicesData ,oddsPositionResult] = await 
 };
 
 
+const updateBetfairMarket = async (req, res) => {
+  const bodyData = req.body;
+  if (!bodyData.eventId) {
+    return SendResponse(res, "error", "event Id is Required");
+  }
+
+   if (!bodyData.marketList) {
+    return SendResponse(res, "error", "marketList  is Required");
+  }
+  let eventId = bodyData.eventId;
+  let marketList = bodyData.marketList;
+
+  let  sportData = await sportListModel.findOne({ eventId: eventId })
+  const returnData = await BetService.updateBetfairMarket(eventId, marketList, sportData);
+  
+  return SendResponse(res, returnData.status, returnData.message , returnData);
+};
+
 module.exports = {
   oddBetPlaced,
   sessionBetPlaced,
@@ -3426,5 +3461,6 @@ module.exports = {
   getOpenBetsBymarketId,
   cancelOpenBets,
   combinedBetFairBetAccept,
-  combinedBetPlaceOdds
+  combinedBetPlaceOdds,
+  updateBetfairMarket
 };

@@ -870,8 +870,9 @@ const diamondSettlement = async (req, res) => {
     let userTotalProfitLossClientOrSettlement = userCashCredit.totalProfitLossClientOrSettlement ? userCashCredit.totalProfitLossClientOrSettlement : 0
     let totalSettledAmount = userTotalProfitLossClientOrSettlement + userTotalSettlementAmountByParent
 
-    let coins = Number(bodyData.amount)
 
+
+    let coins = Number(bodyData.amount)
     if (!coins || coins == 0) {
       return SendResponse(
           res,
@@ -907,6 +908,9 @@ const diamondSettlement = async (req, res) => {
       }
     }
 
+
+    let availableBalance = userData.coins
+
     if (coins > 0) {
 
       if (coins > totalSettledAmountWithoutSign) {
@@ -925,8 +929,15 @@ const diamondSettlement = async (req, res) => {
         );
       }
 
-    }
+       if (coins > availableBalance) {
+                     return SendResponse(
+                     res,
+                     "error",
+                       `maximum amount can settle ${availableBalance} for user ${userData.username}`
+                   );
+       }
 
+    }
 
     let creatorDepositWithdrawType = `Settlement deposit to ${userData.username}`;
     let userDepositWithdrawType = `settlement deposit to ${userData.username}`;
@@ -1660,12 +1671,14 @@ const diamondAccountStatement = async (req, res) => {
             ]
         }
       }
-    }
+    } 
     else {
           if (bodyData.gameName) {
           where.gameName = bodyData.gameName
         }
     }
+
+    
 
 
     if (bodyData.sportId) {
@@ -1701,9 +1714,13 @@ const diamondAccountStatement = async (req, res) => {
     
     
     if (userType == "client") {
+
+  
             delete where[`${loginData.userType}Id`]
             delete where[`${userType}Id`]
-            where.userId  = userId
+            where.userId = userId
+      
+
             where = {
               ...where, ...{
                   $or: [
@@ -1728,6 +1745,19 @@ const diamondAccountStatement = async (req, res) => {
                     transactionType : "depositWithdrawal",
                 }
             }
+      
+      
+      
+      
+        if (bodyData.gameName && bodyData.gameName == "settlement") {
+          where = {
+              $or: [
+                { transactionType: "ledger",  userId: userId }, // for downline
+              ]
+           }
+          }
+      
+
     }
     
     

@@ -2664,6 +2664,11 @@ let checkBetfairCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) =>
   }
   
 
+
+  if (odds > 50) {
+    return returnResponse("error", "max odds allowed 50");
+  }
+
   let returnObj = {
     sid: sid,
     roundId: roundId,

@@ -35,16 +35,16 @@ async function verifyToken(req, res, next) {
         .update(clientIp)
         .digest("hex");
     
-    if (!decodedToken.deviceHash || decodedToken.deviceHash !== currentHash) {
-      return SendResponse(res, "Unauthorized", "token expired ! Please login again");
-    }
+    // if (!decodedToken.deviceHash || decodedToken.deviceHash !== currentHash) {
+    //   return SendResponse(res, "Unauthorized", "token expired ! Please login again");
+    // }
 
 
     if (!decodedToken.authToken) {
       return SendResponse(
         res,
         "Unauthorized",
-        "token required ! Please login again"
+        "Authtoken Required ! Please Login Again"
       );
     }
 

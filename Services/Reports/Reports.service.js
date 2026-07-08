@@ -378,6 +378,8 @@ const userProfitLoss = async (req, res) => {
             },
           },
    ]);
+    
+
 
   if (cricRes) {
     cricRes = convertKeyObject(cricRes, "_id");
@@ -1662,14 +1664,19 @@ const getOddsPositionForAllexch = async (req, res) => {
   const creatorUserType = bodyData.creatorType;
   const userId = bodyData.userId;
   const loginData = req.loggedInUser;
+
   let directUserData = await UserUtils.gettingDirectUserByUserId(
     bodyData.userId
   );
+  
   let userList = directUserData.userDataArray;
 
   userList = JSON.parse(JSON.stringify(userList));
-  Object.entries(userList).forEach(async ([userId, userValue]) => {});
+
+  Object.entries(userList).forEach(async ([userId, userValue]) => { });
+  
   let promises = Object.entries(userList).map(async ([userId, userValue]) => {
+
     let query = {
       marketId: bodyData.marketId,
     };
@@ -1690,9 +1697,6 @@ const getOddsPositionForAllexch = async (req, res) => {
       query.clientId = new ObjectId(bodyData.clientId);
     }
 
-
-
-
     return await OddsPositionModel.aggregate([
       {
         $match: query,
@@ -1704,6 +1708,7 @@ const getOddsPositionForAllexch = async (req, res) => {
           totalPosition: { $sum: "$amount" },
         },
       },
+      
     ]).then((resDataUser) => {
       if (resDataUser) {
         return {
@@ -2519,79 +2524,80 @@ const selfStatementCrick = async (req, res) => {
 
 
 const bsfProfitLoss = async (req, res) => {
-  const bodyData = req.body;
-  const loginData = req.loggedInUser;
-  let userWhere = await whereHelper(loginData);
-  let userType = `${loginData.userType}`;
+  try {
+    const { body, loggedInUser } = req;
+    let userType = loggedInUser.userType;
 
-  if (bodyData.fromDate && bodyData.toDate) {
-    userWhere.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
-  }
-  if (bodyData.userId && bodyData.userType) {
-    userWhere[`${bodyData.userType}Id`] = new ObjectId(bodyData.userId);
-  }
+    const userWhere = await whereHelper(loggedInUser, {
+      transactionType: "profitLoss",
+    });
 
-
-   let profitLossData = await CrickTransactionLogModel.aggregate([
-     {
-       $match: userWhere,
-     },
-     {
-       $group: {
-         _id: `$eventName`,
-         userProfitLoss:  {
-            $sum: {
-              $cond: [
-                {
-                  $and: [{ $eq: ["$transactionType", "profitLoss"] }],
-                },
-                `$${userType}ProfitLoss`,
-                0,
-              ],
-            },
-         },
-          userCommission:  {
-            $sum: {
-              $cond: [
-                {
-                  $and: [{ $eq: ["$transactionType", "profitLoss"] } , { $eq: ["$isComm", true] }],
-                },
-                `$${userType}ProfitLoss`,
-                0,
-              ],
-            },
-         },
-       },
-     },
-     {
-       $sort: {
-         createdAt: -1,
-       },
-     },
-   ]);
-  
-  
-  _dx(profitLossData , "profitLossData")
-
-
-   profitLossData.map((data , key)=>{
-    if(data.isCasino){
-      profitLossData[key].userNetProfitLoss = -1 * data.userNetProfitLossSelf
+    // Date Filter
+    if (body.fromDate && body.toDate) {
+      userWhere.date = await dateWhereCond(body.fromDate, body.toDate);
     }
-   })
 
-   
+    // Downline Filter
+    if (body.downlineUserType && body.downlineUserId) {
+      userWhere[`${body.downlineUserType}Id`] = new ObjectId(body.downlineUserId);
+      userType = body.downlineUserType
+    }
 
-  if (bodyData.totalProfitLoss) {
-    delete userWhere.date;
-    let totalProfitLoss = await profitLossPosition.aggregate([
+    // User Filter
+    if (body.userId && body.userType) {
+      userWhere[`${body.userType}Id`] = new ObjectId(body.userId);
+      userType = body.userType
+    }
+
+
+    const profitLossPipeline = [
       {
         $match: userWhere,
       },
       {
         $group: {
-          _id: `$${downlineUserType}Id`,
-          userNetProfitLoss: { $sum: `$${downlineUserType}NetProfitLossSelf` },
+          _id: {
+              eventId: "$eventId",
+              eventName: "$eventName"
+            },
+          userProfitLoss: {
+            $sum: `$${userType}ProfitLoss`,
+          },
+          userProfitLossWithoutComm: {
+              $sum: {
+                $cond: [
+                  { $not: ["$isComm"] },
+                  `$${userType}ProfitLoss`,
+                  0,
+                ],
+              },
+            },
+          userCommission: {
+            $sum: {
+              $cond: [
+                "$isComm",
+                `$${userType}ProfitLoss`,
+                0,
+              ],
+            },
+          },
+
+          gameName: {
+            $first: "$gameName",
+          },
+
+           marketId: {
+            $first: "$marketId",
+          },
+           
+
+          eventId: {
+            $first: "$eventId",
+          },
+
+          createdAt: {
+            $max: "$createdAt",
+          },
         },
       },
       {
@@ -2599,21 +2605,19 @@ const bsfProfitLoss = async (req, res) => {
           createdAt: -1,
         },
       },
-    ]);
-    profitLossData = {
-      profitLossData: profitLossData,
-      totalProfitLoss: totalProfitLoss[0]
-        ? totalProfitLoss[0].userNetProfitLoss
-        : 0,
-    };
-  }
+    ];
 
-  return SendResponse(
-    res,
-    "success",
-    false,
-    profitLossData
-  );
+
+
+     var cricRes = await CrickTransactionLogModel.aggregate(profitLossPipeline);
+  
+   
+    return SendResponse(res, "success", "", cricRes);
+
+  } catch (error) {
+    console.error("bsfProfitLoss Error:", error);
+    return SendResponse(res, "Something went wrong", true);
+  }
 };
 
 

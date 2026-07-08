@@ -11,6 +11,7 @@ const ledgerModel = require("../../Models/Ledger.model");
 const sportResultModel = require("../../Models/sportsResult.model");
 const OpenBestModel = require("../../Models/BetsList/OpenBetsList.model");
 const directUserShareModel = require("../../Models/User/directUserShareModel");
+const OddsPositionModel = require("../../Models/BetsList/OddsPosition.model");
 const { ObjectId } = require("mongodb");
 const BetService = require("./Bet.service");
 const { returnResponse } = require("../../Helpers/ResponseMapper");
@@ -24,6 +25,7 @@ const {
   _d,
   oddsCommissionHelper,
   betfairCommissionHelper,
+  bookmakerCommissionHelper,
   convertKeyObject,
   dateWhereCond,
   _date,
@@ -98,6 +100,7 @@ let oddsDecision = async (
           wonTeamName = selection.runnerName;
         }
       });
+      
       await sportsMarketListModel.updateMany({
         marketId: betfairMarketId,
       }, {
@@ -116,7 +119,6 @@ let oddsDecision = async (
       }
     }
 
-
     if (updateMarketList && betfairDecision) {
       await SportsList.updateMany(
         { marketId: marketId, eventId: eventId },
@@ -131,11 +133,7 @@ let oddsDecision = async (
     };
 
 
-
-   
     const oddsBetsList = await OddsBetModel.find(oddsWhere);
-
-  
 
     let uniqueClientData = [];
     let finalClientArray = [];
@@ -451,7 +449,14 @@ let oddsDecision = async (
           statementLog.push(pushStatementLogComm);
 
 
-          // _d(commissionData , "commissionData")
+          if (oddsType == "bookmaker" ) {
+              commissionData = bookmakerCommissionHelper(profitLoss, matchShareArray, directShareData);
+          }
+
+
+
+          _d(commissionData , "commissionData")
+          
 
           const crickPushTransactionLog = {
             eventName: matchData.matchName,
@@ -499,7 +504,7 @@ let oddsDecision = async (
             result: wonTeamName,
             betFor: "market"
           };
-
+          
           crickInsertTransactionLog.push(crickPushTransactionLog);
         }
       }
@@ -641,6 +646,15 @@ let oddsDecision = async (
       uniqueClientData,
       marketId
     );
+
+
+    await OddsPositionModel.updateMany({
+       marketId: matchData.marketId,
+       oddsType : oddsType
+    }, {
+        isDeclare : 1
+     })
+   
 
     return returnResponse("success", uniqueClientData, updateUserCoins);
   } catch (error) {
@@ -2156,6 +2170,7 @@ const getSportsResults = async (req, res) => {
 
 
   } catch (error) {
+    
     console.log(error.message);
     return res.status(500).json({
       success: false,

@@ -576,8 +576,6 @@ const crickAccountStatement = async (req, res) => {
     }
 
 
-
-
     let resData = await crickTransaction.aggregate([
       {
         $match: where,
@@ -843,6 +841,7 @@ const userShareDetails = async (req, res) => {
         idArray.push(userShareDetails[userTypes + "Id"])
       }
     })
+
     let userDetails = await UserModel.find(
       { _id: { $in: idArray } },
       { userMatchShare: 1, username: 1, name: 1, userPriority: 1, creatorId: 1, userId: 1, intCasinoShare: 1, }
@@ -2026,6 +2025,8 @@ const createShareDataOfUsers = async (req, res) => {
       const shareData = await UserUtils.createShareDataByUserId(userId, "", true)
       return SendResponse(res, "success", "data fetched", shareData);
     }
+
+
     const userData = await UserModel.find(
       { userType: "client" },
       { userId: 1, _id: 0 }
@@ -2750,17 +2751,7 @@ let checkMaximumWithdrwalAmount = async (req, res) => {
 
       if (withdrawAmount > depositWithdrawAmount) {
         withdrawAmount = depositWithdrawAmount
-      }
-
-        // _d(exposure , "exposure")
-        // _d(totalProfitLoss , "totalProfitLoss")
-        // _d(creditReference , "creditReference")
-        // _d(depositWithdrawAmount , "depositWithdrawAmount")
-        // _d(withdrawAmount , "withdrawAmount")
-        // _d(ledgerEntry , "ledgerEntry")
-
-
-      
+      } 
 
     }
 
@@ -2781,6 +2772,10 @@ let checkMaximumWithdrwalAmount = async (req, res) => {
     return SendResponse(res, "error", "Ledger Error", error);
   }
 };
+
+
+
+
 
 module.exports = {
   mondayToMondayReportProfitLoss,

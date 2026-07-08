@@ -307,10 +307,8 @@ const emitToUser = async (event, data, userId) => {
   try {
     if (!userId) return;
     userId = String(userId);
-    console.log(userId , "userId in emit to user" )
     await ensureRedisClients();
     const socketIds = await getActiveSocketIds(userId);
-    console.log(socketIds , "socketIds")
     if (!socketIds || socketIds.length === 0) {
       return { sent: 0 };
     }

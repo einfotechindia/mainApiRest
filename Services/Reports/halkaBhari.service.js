@@ -1,6 +1,8 @@
 const UserModel = require("../../Models/User/User.model");
 const { ObjectId } = require("mongodb");
 const profitLossPosition = require("../../Models/BetsList/profitLossPosition.model");
+const fancyBetListModel = require("../../Models/BetsList/FancyBetsList.model");
+const oddsBetListModel = require("../../Models/BetsList/OddsBetsList.model");
 const crickTransaction = require("../../Models/crickTransaction.model");
 const { UserTypes } = require("../../Common/Constants");
 const { SendResponse } = require("../../Helpers/ResponseMapper");
@@ -419,133 +421,190 @@ const halkaBhariPlusMinus = async (req, res) => {
 
 const halkaBhariPlusMinusMarketWise = async (req, res) => {
   try {
-    let bodyData = req.body;
+    const bodyData = req.body;
     const loginData = req.loggedInUser;
-    let where = await whereHelper(loginData);
+    const where = await whereHelper(loginData, {
+      transactionType : "profitLoss"
+    });
 
-    let userType = loginData.userType
-    let userId = loginData.userId
-
-    if (bodyData.userType) {
-      userType = bodyData.userType
-    }
-
-    if (bodyData.userId) {
-      userId = bodyData.userId
-    }
-
-    let Userpriority = UserTypes.indexOf(userType);
-
-
-    where.transactionType = "profitLoss"
+    const userType = bodyData.userType || loginData.userType;
+    const userId = bodyData.userId || loginData.userId;
+    const userPriority = UserTypes.indexOf(userType);
 
     if (bodyData.fromDate && bodyData.toDate) {
       where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
     }
 
-    if (bodyData.marketId) {
-      where.marketId = bodyData.marketId
-    }
+    if (bodyData.marketId) where.marketId = bodyData.marketId;
+    if (bodyData.marketType) where.marketType = bodyData.marketType;
+    if (bodyData.selectionId) where.selectionId = bodyData.selectionId;
+    if (bodyData.sportId) where.sportId = bodyData.sportId;
+    if (bodyData.seriesId) where.seriesId = bodyData.seriesId;
 
     if (bodyData.userId && bodyData.userType) {
-      where[bodyData.userType + "Id"] = new ObjectId(bodyData.userId)
+      if (!ObjectId.isValid(bodyData.userId)) {
+        return SendResponse(res, "error", "Invalid User Id");
+      }
+      where[`${bodyData.userType}Id`] = new ObjectId(bodyData.userId);
     }
 
-    if (bodyData.marketType) {
-      where.marketType = bodyData.marketType
-    }
+    const group = {
+      _id: {
+        eventId: "$eventId",
+        eventName: "$eventName"
+      },
 
-    if (bodyData.selectionId) {
-      where.selectionId = bodyData.selectionId
-    }
+      eventId: {
+        $first: "$eventId"
+      },
 
-    if (bodyData.sportId) {
-      where.sportId = bodyData.sportId
-    }
+      eventName: {
+        $first: "$eventName"
+      },
 
-    if (bodyData.seriesId) {
-      where.seriesId = bodyData.seriesId
-    }
+      marketId: {
+        $first: "$marketId"
+      },
 
+      marketType: {
+        $first: "$marketType"
+      },
 
+      selectionId: {
+        $first: "$selectionId"
+      },
 
-    let group = {
-      _id: `$remarks`,
+      result: {
+        $first: "$result"
+      },
+
+      transactionType: {
+        $first: "$transactionType"
+      },
+
+      createdAt: {
+        $max: "$createdAt"
+      },
+
+      date: {
+        $first: "$date"
+      },
+
+      amount: {
+        $sum: "$amount"
+      },
+
       userNetProfitLoss: {
         $sum: {
           $cond: [
+            { $eq: ["$isComm", 0] },
+            `$${userType}ProfitLoss`,
+            0
+          ]
+        }
+      },
+
+      userSessionComm: {
+        $sum: {
+          $cond: [
             {
-              $and: [{ $eq: ["$isComm", 0] }],
+              $and: [
+                { $eq: ["$isComm", 1] },
+                { $eq: ["$marketType", "fancy"] }
+              ]
             },
             `$${userType}ProfitLoss`,
-            0,
-          ],
-        },
+            0
+          ]
+        }
       },
-      amount: { $sum: `$amount` },
-      marketId: { $first: `$marketId` },
-      transactionType: { $first: `$transactionType` },
-      eventId: { $first: `$eventId` },
-      result: { $first: `$result` },
-      isComm: { $first: `$isComm` },
-      createdAt: { $first: `$createdAt` },
-      date: { $first: `$date` },
-      selectionId: { $first: `$selectionId` },
-      marketType: { $first: `$marketType` },
+        oddsComm: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $eq: ["$isComm", 1] },
+                  { $ne: ["$marketType", "fancy"] }
+                ]
+              },
+              `$${userType}ProfitLoss`,
+              0
+            ]
+          }
+        }
+    };
+
+    for (let i = 0; i <= userPriority; i++) {
+      group[`${UserTypes[i]}NetProfitLoss`] = {
+        $sum: `$${UserTypes[i]}ProfitLoss`
+      };
     }
 
-    UserTypes.map((userType, key) => {
-      if (Userpriority >= key) {
-        group[`${userType}NetProfitLoss`] = { $sum: `$${userType}ProfitLoss` }
+    const pipeline = [
+      {
+        $match: where
+      },
+
+      {
+        $project: {
+          eventId: 1,
+          eventName: 1,
+          marketId: 1,
+          marketType: 1,
+          selectionId: 1,
+          result: 1,
+          transactionType: 1,
+          createdAt: 1,
+          date: 1,
+          amount: 1,
+          isComm: 1,
+          [`${userType}ProfitLoss`]: 1,
+          ...Object.fromEntries(
+            UserTypes.slice(0, userPriority + 1).map(u => [
+              `${u}ProfitLoss`,
+              1
+            ])
+          )
+        }
+      },
+
+      {
+        $group: group
+      },
+
+      {
+        $sort: {
+          createdAt: -1
+        }
       }
-    })
+    ];
 
-    group.userSessionComm = {
-      $sum: {
-        $cond: [
-          {
-            $and: [{ $eq: ["$isComm", 1] }, { $eq: ["$marketType", "fancy"] }],
-          },
-          `$${userType}ProfitLoss`,
-          0,
-        ],
-      },
-    }
-
-    group.oddsComm = {
-      $sum: {
-        $cond: [
-          {
-            $and: [{ $eq: ["$isComm", 1] }, { $eq: ["$marketType", "bookmaker"] }],
-          },
-          `$${userType}ProfitLoss`,
-          0,
-        ],
-      },
-    }
-
-
-    var resData = await crickTransaction.aggregate([
-      {
-        $match: where,
-      },
-      {
-        $group: group,
-      },
-      {
-        $sort: { _id: 1 }
-      }
-    ]);
-
+    const resData = await crickTransaction.aggregate(pipeline, {
+      allowDiskUse: true,
+      maxTimeMS: 120000
+    });
 
     return SendResponse(
       res,
       "success",
-      "marketWise data successfully added",
+      "Market wise data fetched successfully",
       resData
     );
-  } catch (e) {
-    console.log(`error in halkaBhariPlusMinusMarketWise`, e);
+
+  } catch (err) {
+
+    console.error("halkaBhariPlusMinusMarketWise Error");
+
+    console.error({
+      message: err.message,
+      stack: err.stack
+    });
+
+    return SendResponse(
+      res,
+      "error",
+      "Something went wrong"
+    );
   }
 };
 
@@ -566,8 +625,6 @@ const halkaBhariSportsProfitLoss = async (req, res) => {
     }
 
     let userDataArray = {}
-
-
 
     if (bodyData.isClient & bodyData.isClient == true) {
       let clientData = await UserModel.find({
@@ -809,11 +866,311 @@ const monitoruser = async (req, res) => {
 }
 
 
+const clientProfitLossByMarket = async (req, res) => {
+  try {
+    const bodyData = req.body;
+    const loginData = req.loggedInUser;
+
+    const where = await whereHelper(loginData, {
+      transactionType: "profitLoss",
+      clientId: { $ne: null },
+    });
+
+    const userType = bodyData.userType || loginData.userType;
+    const userId = new ObjectId(bodyData.userId || loginData.userId);
+
+    if (bodyData.fromDate && bodyData.toDate) {
+      where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+    }
+
+    where[`${userType}Id`] = userId;
+
+    const group = {
+      _id: "$userId",
+       cricket: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$gameType", "Cricket"] },
+                    { $ne: ["$marketType", "fancy"] }
+                  ]
+                },
+                "$amount",
+                0
+              ]
+            }
+          },
+      fancy: {
+        $sum: {
+          $cond: [{ $eq: ["$marketType", "fancy"] }, "$amount", 0],
+        },
+      },
+      tennis: {
+        $sum: {
+          $cond: [{ $eq: ["$gameType", "tennis"] }, "$amount", 0],
+        },
+      },
+      soccer: {
+        $sum: {
+          $cond: [{ $eq: ["$gameType", "soccer"] }, "$amount", 0],
+        },
+      },
+      internationalCasino: {
+        $sum: {
+          $cond: [{ $eq: ["$marketType", "internationalCasino"] }, "$amount", 0],
+        },
+      },
+      diamondCasino: {
+        $sum: {
+          $cond: [{ $eq: ["$marketType", "diamondCasino"] }, "$amount", 0],
+        },
+      },
+    };
+
+    const resData = await crickTransaction.aggregate([
+      { $match: where },
+      { $group: group },
+      { $sort: { _id: 1 } },
+    ]);
+
+    if (!resData.length) {
+      return SendResponse(res, "success", "data fetch successfully", []);
+    }
+
+    const userIds = resData.map((item) => item._id);
+
+    let userData = await UserModel.find(
+      {
+        userId: { $in: userIds },
+      },
+      {
+        username: 1,
+        name: 1,
+        parentData: 1,
+      }
+    ).lean();
+
+    userData = convertKeyObject(userData, "_id");
+
+    const userTypes = [
+      "owner",
+      "subowner",
+      "superadmin",
+      "admin",
+      "subadmin",
+      "master",
+      "superagent",
+      "agent",
+    ];
+
+    const returnData = resData.map((element) => {
+      const user = userData[element._id];
+
+      if (!user) {
+        return element;
+      }
+
+      const parentUsernames = Object.fromEntries(
+        userTypes.map((type) => [
+          type,
+          user.parentData?.[`${type}userName`] ?? null,
+        ])
+      );
+
+      return {
+        ...element,
+        userData: {
+          username: user.username,
+          name: user.name,
+          parentUsernames,
+        },
+      };
+    });
+
+    return SendResponse(
+      res,
+      "success",
+      "data fetch successfully",
+      returnData
+    );
+  } catch (error) {
+    console.error(error);
+    return SendResponse(
+      res,
+      "error",
+      "Something went wrong",
+      null
+    );
+  }
+};
+
+
+
+const fancyScale = async (req, res) => {
+  try {
+    const bodyData = req.body;
+    const loginData = req.loggedInUser;
+    const where = await whereHelper(loginData, {
+      isDeleted: 0,
+      isDeclare: 1
+    });
+    const userId = new ObjectId(bodyData.userId || loginData.userId);
+
+    if (bodyData.fromDate && bodyData.toDate) {
+      where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+    }
+
+    let directUserData = await gettingDirectUserByUserId(userId);
+    let userDataArray = directUserData.userDataArray;
+
+   const results = await Promise.all(
+      Object.values(userDataArray).map(async (user) => {
+        const downLineUserType = user.userType;
+        const downLineUserId = user.userId;
+
+        const originalWhere = {
+          ...where,
+          [`${downLineUserType}Id`]: downLineUserId,
+        };
+
+        const resData = await fancyBetListModel.aggregate([
+          {
+            $match: originalWhere,
+          },
+          {
+            $group: {
+              _id: `$${downLineUserType}Id`,
+              amount: { $sum: "$amount" },
+            },
+          },
+          {
+            $sort: { _id: 1 },
+          },
+        ]);
+
+    if (!resData.length) return null;
+
+    return {
+      ...resData[0],
+      userData: {
+        userId: user.userId,
+        userType: user.userType,
+        username: user.username,
+        name: user.name,
+      },
+    };
+  })
+);
+
+const returnData = results.filter(Boolean);
+
+
+    return SendResponse(
+      res,
+      "success",
+      "data fetch successfully",
+      returnData
+    );
+  } catch (error) {
+    console.error(error);
+    return SendResponse(
+      res,
+      "error",
+      "Something went wrong",
+      null
+    );
+  }
+};
+
+
+const matchScale = async (req, res) => {
+  try {
+    const bodyData = req.body;
+    const loginData = req.loggedInUser;
+    const where = await whereHelper(loginData, {
+      isDeleted: 0,
+      isDeclare : 1 
+    });
+    const userId = new ObjectId(bodyData.userId || loginData.userId);
+
+    if (bodyData.fromDate && bodyData.toDate) {
+      where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+    }
+
+    let directUserData = await gettingDirectUserByUserId(userId);
+    let userDataArray = directUserData.userDataArray;
+
+   const results = await Promise.all(
+      Object.values(userDataArray).map(async (user) => {
+        const downLineUserType = user.userType;
+        const downLineUserId = user.userId;
+
+        const originalWhere = {
+          ...where,
+          [`${downLineUserType}Id`]: downLineUserId,
+        };
+
+        const resData = await oddsBetListModel.aggregate([
+          {
+            $match: originalWhere,
+          },
+          {
+            $group: {
+              _id: `$${downLineUserType}Id`,
+              amount: { $sum: "$amount" },
+            },
+          },
+          {
+            $sort: { _id: 1 },
+          },
+        ]);
+
+
+
+    if (!resData.length) return null;
+
+    return {
+      ...resData[0],
+      userData: {
+        userId: user.userId,
+        userType: user.userType,
+        username: user.username,
+        name: user.name,
+      },
+    };
+  })
+);
+
+const returnData = results.filter(Boolean);
+
+
+    return SendResponse(
+      res,
+      "success",
+      "data fetch successfully",
+      returnData
+    );
+  } catch (error) {
+    console.error(error);
+    return SendResponse(
+      res,
+      "error",
+      "Something went wrong",
+      null
+    );
+  }
+};
+
+
 module.exports = {
   accountHalkaBhari,
   inplayOddsPositionHalkaBhari,
   halkaBhariPlusMinus,
   halkaBhariPlusMinusMarketWise,
   halkaBhariSportsProfitLoss,
-  getClientPositionByMarket
+  getClientPositionByMarket,
+  clientProfitLossByMarket,
+  fancyScale,
+  matchScale
 };

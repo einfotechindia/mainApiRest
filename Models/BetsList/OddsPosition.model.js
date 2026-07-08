@@ -28,6 +28,7 @@ const OddsPositionSchema = new mongoose.Schema(
     masterAmount: { type: Number, default: 0 },
     superagentAmount: { type: Number, default: 0 },
     agentAmount: { type: Number, default: 0 },
+    isDeclare: { type: Number, default: 0 },
     sportsId: { type: Number, default: 4 },
     date: { type: Number, default: () => moment().unix() * 1000 },
   },

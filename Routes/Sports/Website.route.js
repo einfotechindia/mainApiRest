@@ -243,6 +243,18 @@ router.post(
 );
 
 
+
+router.post(
+  `/userExposureListUpdateBulk`,
+  verifyToken,
+  isOwnerAndStaff,
+  websiteController.userExposureListUpdateBulk
+);
+
+
+
+
+
 router.post(
   `/deleteUserData`,
   verifyToken,

@@ -105,9 +105,13 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(decruptPayload);
 
+
+
+
 // [Feature 4] Smart Sanitization — sensitive fields (password, token, otp) skip
 const SENSITIVE_KEYS = new Set(['password', 'pass', 'pwd', 'token', 'auth', 'authorization', 'otp', 'pin', 'secret', 'newPassword', 'oldPassword', 'confirmPassword']);
 app.use((req, res, next) => {
+
   const sanitize = (obj) => {
     if (!obj || typeof obj !== 'object') return;
     for (const key of Object.keys(obj)) {
@@ -125,6 +129,9 @@ app.use((req, res, next) => {
   sanitize(req.params);
   next();
 });
+
+
+
 
 // Health check — securityGuard se pehle taaki load balancer fail na ho
 app.use(healthRoutes);
@@ -152,7 +159,6 @@ const halkabhariRoutes = require("./Routes/halkaBhari.route");
 const dashboardRoutes = require("./Routes/dasboard.route");
 const diamondRoutes = require("./Routes/diamond.route");
 const paymentRoutes = require("./Routes/User/Payment.route");
-
 const userReportRoutes = require("./Routes/UserReport.route");
 const paymentAccountRoutes = require("./Routes/PaymentAccount.route");
 const btocReportsRoutes = require("./Routes/BtoCReports.route");

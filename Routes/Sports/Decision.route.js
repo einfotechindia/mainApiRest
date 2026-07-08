@@ -3,7 +3,7 @@ const { verifyToken , isOwnerAndStaff } = require("../../Middlewares/VerifyToken
 const router = express.Router();
 const decisionController = require("../../Controllers/Bets/Decision.controller");
 
-router.post("/sessionDecision", verifyToken, isOwnerAndStaff , decisionController.sessionDecision);
+router.post("/sessionDecision", verifyToken, isOwnerAndStaff, decisionController.sessionDecision);
 router.post("/cancelFancy", verifyToken , isOwnerAndStaff , decisionController.cancelFancy);
 router.post("/rollbackFancy",verifyToken, isOwnerAndStaff , decisionController.rollbackFancy);
 router.post("/oddsDecision", verifyToken, isOwnerAndStaff,decisionController.oddsDecision);
@@ -115,6 +115,9 @@ router.post(
 router.post("/resetComm", verifyToken, decisionController.resetComm);
 router.post("/resetCommList", verifyToken, decisionController.resetCommList);
 
+
+
+router.post("/sessionDecisionByCenterpanel", decisionController.sessionDecision);
 
 
 module.exports = router;

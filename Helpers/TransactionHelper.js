@@ -31,8 +31,6 @@ const {
 } = require("../Helpers/UsersUtils");
 
 const {emitToUser} =  require("../socket.js")
-
-
 require("dotenv").config();
 
 const UpdateUserCoins = async (
@@ -491,6 +489,7 @@ async function insertTransactionLogCasino(userData, logData, shareData) {
 
   try {
     const transaction = await TransactionLogModel.create(finalLogData);
+    _d(transaction , "transaction")
     return transaction._id;
   } catch (error) {
     console.log("insert Transaction Helper Error", error);

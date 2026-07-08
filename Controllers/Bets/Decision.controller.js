@@ -166,7 +166,8 @@ const sessionDecision = async (req, res) => {
           sessionTurnOver: 0,
           profitLoss: 0,
           sessionName: sessionData.sessionName,
-          gtype : gtype ? gtype : ""
+          gtype: gtype ? gtype : "",
+          eventName: `${matchData.matchName}`,
         };
         uniqueClientData.push(sessionData.userId);
       }
@@ -218,6 +219,8 @@ const sessionDecision = async (req, res) => {
       }
 
     });
+
+
 
     let playWhere = {
       clientId: {
@@ -342,6 +345,7 @@ const sessionDecision = async (req, res) => {
           transactionType: "profitLoss",
           gameType: "Cricket",
           marketType: "fancy",
+          eventName : clientData.eventName,
           selectionId: selectionId,
           remarks: crickRemark,
           userId: clientData.userId,
@@ -463,6 +467,7 @@ const sessionDecision = async (req, res) => {
             eventId: matchData.eventId,
             sportId: matchData.sportId,
             seriesId: matchData.seriesId,
+            eventName : clientData.eventName,
             gameName: "sports",
             transactionType: "profitLoss",
             gameType: "Cricket",
@@ -1118,25 +1123,25 @@ const oddsDecision = async (req, res) => {
     let wonTossTeamName = "";
 
     if (decisionSelectionId == "draw" || decisionSelectionId == "abonded") {
-      wonTeamName = decisionSelectionId;
-      matchData.wonTeamName = decisionSelectionId;
+          wonTeamName = decisionSelectionId;
+          matchData.wonTeamName = decisionSelectionId;
+          
+          await OddsBetModel.updateMany(
+            { marketId: marketId,  oddsType: { $in: ["matchOdds" , "bookmaker"] },},
+            { $set: { isDeleted: 1, isDeclare: 1 } }
+          );
 
+          let updateTranaction = await TransactionLogModel.deleteMany({
+            marketId: marketId,
+            forBet: 1,
+            gameType: { $in: ["bookmaker", "matchOdds"] },
+          });
 
-      await OddsBetModel.updateMany(
-        { marketId: marketId, oddsType: { $ne: "toss" } },
-        { $set: { isDeleted: 1, isDeclare: 1 } }
-      );
-
-      let updateTranaction = await TransactionLogModel.deleteMany({
-        marketId: marketId,
-        forBet: 1,
-        isDeclare: 0,
-      });
-
-      await CrickTransactionLogModel.deleteMany({
-        marketId: marketId,
-        marketType: { $in: ["matchOdds", "bookmaker"] },
-      });
+          await CrickTransactionLogModel.deleteMany({
+            marketId: marketId,
+            marketType: { $in: ["bookmaker" , "matchOdds"] },
+          });
+      
     } else {
       wonTeamName = await DecisionService.getWonTeamName(
         matchData,

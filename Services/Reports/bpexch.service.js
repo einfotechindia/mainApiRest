@@ -710,7 +710,10 @@ const checkExposuerForUsers = async (req, res) => {
     let userTypeAmount = userType === "client" ? "amount" : `${userType}Amount`;
     let matchList = await getMatchList();
 
-    const filteredList = matchList.filter(d => [1, 3, 4].includes(d.sportId));
+
+    // _d(matchList , "matchList")
+
+    const filteredList = matchList.filter(d => [1, 3, 4 , 2 , 9999].includes(d.sportId));
     const eventIdArrayList = filteredList.map(d => d.eventId);
 
     const racesFilteredList = matchList.filter(d => [7, 4339].includes(d.sportId));
@@ -724,9 +727,14 @@ const checkExposuerForUsers = async (req, res) => {
     const matchMapByMarketId = {}
      racesFilteredList.forEach(r => {
       matchMapByMarketId[r.marketId] = r;
-    });
+     });
+    
+    
+    // _d(eventIdArrayList , "eventIdArrayList")
+    // _d(marketIdArrayList , "marketIdArrayList")
     
     let whereQuery = {
+        isDeclare : 0,
         [userTypeId]: new ObjectId(userId),
         $or: [
           { eventId: { $in: eventIdArrayList } },
@@ -734,7 +742,9 @@ const checkExposuerForUsers = async (req, res) => {
         ]
     };
     
-    
+
+  //  _d(whereQuery , "whereQuery")
+
   const positionData = await OddsPositionModel.aggregate([
       {
         $match: whereQuery,
@@ -779,8 +789,16 @@ const checkExposuerForUsers = async (req, res) => {
           sportsId: 1,
           maxPosition: { $multiply: ["$maxPosition", -1] }, // 🔥 multiply by -1
         },
-      },
-    ]);
+    },
+      {
+      $sort: {
+      "_id.marketId": 1,
+      "_id.eventId": 1,
+      "_id.oddsType": 1,
+      teamName: 1, // optional
+    },
+  },
+  ]);
     
     let returnData = []
     
@@ -807,7 +825,6 @@ const checkExposuerForUsers = async (req, res) => {
       })
     });
         
-
         let sessionWhereQuery = {
             [userTypeId]: new ObjectId(userId),
             eventId: {$in : eventIdArrayList},
@@ -815,7 +832,7 @@ const checkExposuerForUsers = async (req, res) => {
             forBet: 1,
             overallType: "fancyOdds",
         };
-          
+        
 
       let resData = await TransactionLogModel.aggregate([
       {
@@ -835,7 +852,7 @@ const checkExposuerForUsers = async (req, res) => {
       ]);
         
         resData && resData.map(p => {
-        const match = matchMap[p._id.eventId] || {};
+          const match = matchMap[p._id.eventId] || {};
           returnData.push({
             _id  : `${p.remarks}`,
             matchName: match.matchName,
@@ -843,7 +860,7 @@ const checkExposuerForUsers = async (req, res) => {
             marketId: match.marketId,
             sportId: match.sportId,
             gameType : "fancyOdds",
-            amount: p.position,
+            amount:  p.position,
             teamName: `${p.remarks}`,
             dataType : "fancy"
           })
@@ -1592,20 +1609,10 @@ const bpexchClientStatement = async (req, res) => {
       where.transactionType = bodyData.transactionType;
     }
 
-    // if (bodyData.fromDate && bodyData.toDate) {
-    //   where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
-    // }
+    if (bodyData.fromDate && bodyData.toDate) {
+      where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+    }
 
-
-     if (bodyData.fromDate && bodyData.toDate) {
-            const isTime = detectIsTime(bodyData.fromDate, bodyData.toDate);
-            const dateWhere = await dateWhereCond(bodyData.fromDate, bodyData.toDate, false, isTime);
-            if (isTime) {
-             where.createdAt = dateWhere;
-            } else {
-              where.date = dateWhere;  
-            }
-      }
 
     if (bodyData.marketId) {
       where.marketId = bodyData.marketId
@@ -1630,7 +1637,6 @@ const bpexchClientStatement = async (req, res) => {
     if (bodyData.gameName) {
       where.gameName = bodyData.gameName
     }
-
 
 
     let group = {
@@ -1708,7 +1714,6 @@ const bpexchClientStatement = async (req, res) => {
           },
         },
       ]);
-
       const totalSkipped =
         crickTotalAmountCount[0].skippedRecords.length > 0
           ? crickTotalAmountCount[0].skippedRecords[0].totalSkipped

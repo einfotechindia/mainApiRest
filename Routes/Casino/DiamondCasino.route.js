@@ -108,7 +108,6 @@ router.post(
 router.post(
   "/resultByRoundWise",
    verifyToken,
-  isOwnerAndStaff,
   diamondCasinoController.resultByRoundWise
 );
 

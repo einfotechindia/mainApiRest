@@ -82,6 +82,10 @@ let DiamondCasinoListSchema = new Schema({
     default: () => Date.now(),
   },
   selectionIdArray: {},
+  betDelay: {
+    type: Number,
+    default: 0,
+  },
   createdAt: {
     type: Number,
     default: () => Date.now(),

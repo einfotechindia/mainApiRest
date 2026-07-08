@@ -820,17 +820,26 @@ const betfairFancyCommissionHelper = (
   };
 
   if (profitLoss > 0) {
+
       returnData.clientComm = -1 * Math.round(
         (profitLoss * matchShareArray.clientBetfairCommission) / 100
       );
     
+    
+    returnData.clientComm  = returnData.clientComm /2
+    
     for (let index = 0; index < directShareData.length; index++) {
       const element = directShareData[index];
-          returnData[`${element.creatorUserType}Comm`] = +(-1 * ((Math.abs(profitLoss) * matchShareArray[`${element.creatorUserType}BetfairCommission`]))/100).toFixed(2)
+          returnData[`${element.creatorUserType}Comm`] = +(-1 * ((Math.abs(profitLoss) * matchShareArray[`${element.creatorUserType}BetfairCommission`]))/100)
           returnData[`${element.creatorUserType}LedgerSessionComm`] =
-           +(-1 *  ((Math.abs(profitLoss) * element[`${element.creatorUserType}LedgerBetfairComm`]))/100).toFixed(2)
+           +(-1 *  ((Math.abs(profitLoss) * element[`${element.creatorUserType}LedgerBetfairComm`]))/100)
           returnData[`${element.creatorUserType}ProfitLossSessionComm`] =
-           +(-1 *  ((Math.abs(profitLoss) * element[`${element.creatorUserType}ProfitLossBetfairComm`])) / 100).toFixed(2)
+            +(-1 * ((Math.abs(profitLoss) * element[`${element.creatorUserType}ProfitLossBetfairComm`])) / 100)
+      
+          returnData[`${element.creatorUserType}Comm`] = (returnData[`${element.creatorUserType}Comm`] / 2).toFixed(2)
+          returnData[`${element.creatorUserType}LedgerSessionComm`] = (returnData[`${element.creatorUserType}LedgerSessionComm`] / 2).toFixed(2)
+          returnData[`${element.creatorUserType}ProfitLossSessionComm`] = (returnData[`${element.creatorUserType}ProfitLossSessionComm`] / 2).toFixed(2)
+        
         }
   }
 
@@ -1273,6 +1282,84 @@ const betfairCommissionHelper =  (
 
   return returnData;
 };
+
+
+const bookmakerCommissionHelper =  (
+  profitLoss,
+  matchShareArray,
+  directShareData = {}
+) => {
+  let returnData = {
+    clientComm: 0,
+    agentComm: 0,
+    superagentComm: 0,
+    masterComm: 0,
+    subadminComm: 0,
+    adminComm: 0,
+    superadminComm: 0,
+    subownerComm: 0,
+    ownerComm: 0,
+  };
+
+  if (profitLoss < 0) {
+    returnData.clientComm =
+      ((Math.abs(profitLoss) * matchShareArray.clientMatchCommission)) /
+      100;
+
+    returnData.agentComm =
+      ((Math.abs(profitLoss) * matchShareArray.agentMatchCommission)) /
+      100;
+
+    returnData.superagentComm =
+      (
+        (Math.abs(profitLoss) * matchShareArray.superagentMatchCommission)) /
+      100;
+
+    returnData.masterComm =
+      ((Math.abs(profitLoss) * matchShareArray.masterMatchCommission)) /
+      100;
+
+    returnData.subadminComm =
+      (
+        (Math.abs(profitLoss) * matchShareArray.subadminMatchCommission)) /
+      100;
+
+    returnData.adminComm =
+      ((Math.abs(profitLoss) * matchShareArray.adminMatchCommission)) /
+      100;
+
+    returnData.superadminComm =
+      (
+        (Math.abs(profitLoss) * matchShareArray.superadminMatchCommission)) /
+      100;
+
+    returnData.subownerComm =
+      (
+        (Math.abs(profitLoss) * matchShareArray.subownerMatchCommission)) /
+      100;
+
+    returnData.ownerComm =
+      ((Math.abs(profitLoss) * matchShareArray.ownerMatchCommission)) /
+      100;
+    
+    
+    if (directShareData) {
+      for (let index = 0; index < directShareData.length; index++) {
+        const element = directShareData[index];
+        returnData[`${element.creatorUserType}LedgerBetfairComm`] =
+          ( (Math.abs(profitLoss) * element[`${element.creatorUserType}LedgerMatchComm`])) / 100
+        
+        returnData[`${element.creatorUserType}ProfitLossBetfairComm`] =
+            ( -1 * (Math.abs(profitLoss) * element[`${element.creatorUserType}ProfitLossMatchComm`]))/100
+      }
+    }
+
+  }
+
+
+  return returnData;
+};
+
 
 const getMondayRange = () => {
   const now = new Date();
@@ -2043,5 +2130,6 @@ module.exports = {
   checkBetByRedis,
   parseFilterDate,
   detectIsTime,
-  gameBetValidaterRedis
+  gameBetValidaterRedis,
+  bookmakerCommissionHelper
 };

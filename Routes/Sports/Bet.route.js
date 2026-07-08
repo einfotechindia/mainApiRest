@@ -9,9 +9,6 @@ router.post("/oddBetPlaced", verifyToken, betController.oddBetPlaced);
 router.post("/sessionBetPlaced", verifyToken, betController.sessionBetPlaced);
 router.post("/meterKhadoOddEvenCricketCassinoBetPlace", verifyToken, betController.meterKhadoOddEvenCricketCassinoBetPlace);
 router.post("/combinedBetPlaceOdds", verifyToken, betController.combinedBetPlaceOdds);
-
-
-
 router.post("/betsList", verifyToken, betController.betsList);
 router.post("/casinoBetList", verifyToken, betController.casinoBetList);
 
@@ -39,9 +36,7 @@ router.post(
   betController.getSessionPositionBySelectionId
 );
 
-
 router.post("/getSessionList", verifyToken, betController.getSessionList);
-
 router.post("/getCasinoList", verifyToken, betController.getCasinoList);
 router.post("/getMatkaList", verifyToken, betController.getMatkaList);
 router.post(
@@ -67,6 +62,7 @@ router.post("/actualExposerList", verifyToken, betController.actualExposerList);
 router.post(
   "/insertBetfairMarket",
   verifyToken,
+  isOwnerAndStaff,
   betController.insertBetfairMarket
 );
 router.post(
@@ -85,6 +81,13 @@ router.post("/updateMatchByMarketId", verifyToken, isOwnerAndStaff, betControlle
 router.post("/saveSportsList", verifyToken, isOwnerAndStaff, betController.saveSportsList);
 router.post("/marketReload", verifyToken, isOwnerAndStaff, betController.marketReload);
 
+
+router.post(
+  "/updateBetfairMarket",
+  verifyToken,
+  isOwnerAndStaff,
+  betController.updateBetfairMarket
+);
 
 
 // without verifyToken

@@ -10,7 +10,8 @@ const {
   _date,
   _date_time,
   casinoShareArray,
-  getSettingData
+  getSettingData,
+  betfairFancyCommissionHelper
 } = require("../../Helpers/CommonHelper");
 const moment = require("moment");
 const {
@@ -797,19 +798,19 @@ const betsResultOfClient = async (req, res) => {
       clientIdArray
     );
 
-    if (siteSetting.IS_SOCKET) {
-      let userArray = [];
-      clientIdArray.map(async (userId) => {
-        userId = userId.toString();
-        let pushData = {
-          userId: userId,
-          data: {
-            fetch: true,
-          },
-        };
-        userArray.push(pushData);
-      });
-    }
+    // if (siteSetting.IS_SOCKET) {
+    //   let userArray = [];
+    //   clientIdArray.map(async (userId) => {
+    //     userId = userId.toString();
+    //     let pushData = {
+    //       userId: userId,
+    //       data: {
+    //         fetch: true,
+    //       },
+    //     };
+    //     userArray.push(pushData);
+    //   });
+    // }
 
     await client.del(`redisBetsResultOfClient`);
 
@@ -4785,18 +4786,26 @@ const saveBetfairCasinoResults = async (req, res) => {
         ? req.body.roundIdArray
         : await client.smembers("betfairCasinoRoundId");
     
-    
-    _d(betfairUndeclareRoundId , "betfairUndeclareRoundId")
 
     if (bodyData.isDatabase) {
+        let where = {
+                isDeclare: 0,
+                isPartiallyDeclare: 0,
+                isDeleted: false,
+                isBetfairCasino : true
+        }
+          
+          if (bodyData.roundId) {
+            where.roundId = bodyData.roundId
+            delete where.isPartiallyDeclare 
+            delete where.isDeclare 
+            delete where.isDeleted 
+          }
+          
+      
       let undeclaredRound = await casinoBetModel.aggregate([
         {
-          $match: {
-            isDeclare: 0,
-            isPartiallyDeclare: 0,
-            isDeleted: false,
-            isBetfairCasino : true
-          },
+          $match: where,
         },
         {
           $group: {
@@ -4815,14 +4824,23 @@ const saveBetfairCasinoResults = async (req, res) => {
           },
         },
       ]);
+
       undeclaredRound.map((data) => {
         betfairUndeclareRoundId.push(data._id);
       });
     }
+
+     betfairUndeclareRoundId = [...new Set(betfairUndeclareRoundId)];
     
 
-    if (!betfairUndeclareRoundId?.length) {
-      return res ? SendResponse(res, "success", "No undeclared round IDs") : [];
+
+    if (betfairUndeclareRoundId?.length < 1) {
+      if (res) {
+        return res ? SendResponse(res, "success", "No undeclared round IDs") : [];
+      } else {
+        return false
+      }
+      
     }
 
     const hitUrl = process.env.BETFAIR_CASINO_RESULT_URL;
@@ -4842,23 +4860,55 @@ const saveBetfairCasinoResults = async (req, res) => {
     const roundResultsMap = {};
     const successRoundIds = [];
 
+
+    let sideWinnerArray = []
+    let mainWinnerArray = []
+    let refundArray = []
+
     for (let i = 0; i < apiResults.length; i++) {
       const resObj = apiResults[i];
       if (resObj.status === "fulfilled" && resObj.value?.data?.data) {
         const data = resObj.value.data.data;
         let parseData = data.data
         parseData = JSON.parse(parseData)
-        let selectionData = parseData.selections
-        let eventStatus = parseData?._pro.evt_status
-        let winnerSelectionIdArray = []
-        if (eventStatus == "SUSPENDED_GAME_SETTLING") {
-          selectionData.map((sdata) => {
-            if (sdata.runner_status == "WINNER") {
-              winnerSelectionIdArray.push(sdata.name)
-            }
-          })
-        }
 
+        let selectionData = parseData.selections
+        let sideSelection = parseData.side_selections
+
+        let allResults = []
+        selectionData && selectionData.map((data) => {
+          allResults.push(data)
+
+         if (data.runner_status === "WINNER" && data.name) {
+              mainWinnerArray.push(data.name.toUpperCase());
+          }
+          
+        })
+
+         sideSelection && sideSelection.map((sideData) => {
+           allResults.push(sideData)
+           if (sideData.runner_status == "WINNER" && sideData.name) {
+              sideWinnerArray.push(sideData.name.toUpperCase())
+           }
+           
+         })
+        
+       // _d(allResults, "allResults")
+        
+        let winnerSelectionIdArray = []
+
+          allResults.map((sdata) => {
+            if (sdata.runner_status == "WINNER") {
+              winnerSelectionIdArray.push(sdata.name.toUpperCase())
+            }
+
+            if (sdata.runner_status == "REFUND") {
+              refundArray.push(sdata.name.toUpperCase())
+            }
+
+          })
+        
+        
         if (winnerSelectionIdArray.length > 0) {
           data['winnerSelectionIdArray'] = winnerSelectionIdArray
           roundResultsMap[data.roundId] = data;
@@ -4867,6 +4917,8 @@ const saveBetfairCasinoResults = async (req, res) => {
 
       }
     }
+
+
     if (!successRoundIds.length) {
       return res ? SendResponse(res, "success", "No valid results received") : [];
     }
@@ -4882,80 +4934,112 @@ const saveBetfairCasinoResults = async (req, res) => {
     const transactionLogs = [];
     const crickTransactionLogObj = [];
     const betIdArray = []
+    const roundIdArray = []
     const statementLog = [];
     const userIdArray = [];
     const redisCleanupSet = new Set();
+    const finalClientArray = {};
 
-    for (const bet of roundBetData) {
-      let  resultData = roundResultsMap[bet.roundId+""];
-      if (!resultData) continue;
-      let winnerSelectionIdArray = resultData.winnerSelectionIdArray
-      resultData = JSON.parse(resultData.data)
-      let profit = bet.profit
-      let lossAmount = -1 * Math.abs(bet.amount);
-      let profitLoss = lossAmount
-      let betId = bet._id
-      let roundId = bet.roundId
-      if (winnerSelectionIdArray.includes(bet.sid)) {
-        profitLoss = profit
-      }
-      betIdArray.push(betId)
-      userIdArray.push(bet.userId)
-      const directShareData = await getShareChainData(bet.clientId);
+roundBetData.forEach((bet) => {
+  const { userId, roundId } = bet;
 
-      const transaction = {
-        amount: profitLoss,
-        clientProfitLoss: profitLoss,
-        marketId: bet.roundId,
-        eventId: bet.eventId,
-        sportId: 1000000,
-        seriesId: bet.eventId,
-        gameName: `betfairCasino`,
-        gameType: "avaitor",
-        marketType: "diamondCasino",
-        selectionId: bet.roundId,
-        remarks: `betfairCasino-(${_date()})`,
-        userId: bet.clientId,
-        ownerId: bet.ownerId,
-        subownerId: bet.subownerId,
-        superadminId: bet.superadminId,
-        adminId: bet.adminId,
-        subadminId: bet.subadminId,
-        masterId: bet.masterId,
-        superagentId: bet.superagentId,
-        agentId: bet.agentId,
-        betId : betId
-      };
+  if (!finalClientArray[userId]) {
+    finalClientArray[userId] = {};
+  }
 
-      if (directShareData) {
-        for (const share of directShareData) {
-          transaction[`${share.creatorUserType}LedgerAmount`] =
-            (share[`${share.creatorUserType}LedgerCasinoShare`] * profitLoss) / 100;
-          transaction[`${share.creatorUserType}ProfitLoss`] =
-            (share[`${share.creatorUserType}ProfitLossrCasinoShare`] * profitLoss) / 100;
+  if (!finalClientArray[userId][roundId]) {
+    finalClientArray[userId][roundId] = {
+      userId,
+      roundId,
+      ownerId: bet.ownerId,
+      subownerId: bet.subownerId,
+      superadminId: bet.superadminId,
+      adminId: bet.adminId,
+      subadminId: bet.subadminId,
+      masterId: bet.masterId,
+      superagentId: bet.superagentId,
+      agentId: bet.agentId,
+      clientId: bet.clientId,
+      isComm: true,
+      betTurnOver: 0,
+      profitLoss: 0,
+      remarks :`betfairCasino - ${bet.roundId} - ${bet.casinoType} / -(${_date()})`
+    };
+    roundIdArray.push(roundId)
+  }
+
+  const resultData = roundResultsMap[String(roundId)];
+
+  if (!bet.isDeleted && resultData) {
+    const winnerSelectionIdArray = resultData.winnerSelectionIdArray;
+    const parsedData = JSON.parse(resultData.data);
+    let profitLoss = bet.loss;
+
+    let betType = bet.betType
+    let betFor = bet.betFor
+
+    if (winnerSelectionIdArray.includes(bet.sid.toUpperCase()) && betType != "K") {
+      profitLoss = bet.profit;
+    } else if (betType == "K" && !winnerSelectionIdArray.includes(bet.sid.toUpperCase())) {
+      profitLoss = bet.profit;
+    }
+
+    if (refundArray.includes(bet.sid.toUpperCase())) {
+       profitLoss = 0;
+    } 
+    
+    finalClientArray[userId][roundId].betTurnOver += bet.amount;
+    finalClientArray[userId][roundId].profitLoss += profitLoss;
+  }
+});
+
+
+  //  _dx(finalClientArray , "finalClientArray")
+
+    if (roundBetData.length > 0) {
+      for (const bet of roundBetData) {
+        
+        let resultData = roundResultsMap[bet.roundId + ""];
+        if (!resultData) continue;
+        let winnerSelectionIdArray = resultData.winnerSelectionIdArray
+
+        resultData = JSON.parse(resultData.data)
+
+        let profit = bet.profit
+        let lossAmount = bet.loss;
+        let profitLoss = lossAmount
+        let betId = bet._id
+        let roundId = bet.roundId
+        let betType = bet.betType
+        let betFor = bet.betFor
+        
+        if (winnerSelectionIdArray.includes(bet.sid.toUpperCase()) && betType != "K") {
+            profitLoss = profit;
+          } else if (betType == "K" && !winnerSelectionIdArray.includes(bet.sid.toUpperCase())) {
+            profitLoss = profit;
         }
-      }
+        
+        if (refundArray.includes(bet.sid.toUpperCase())) {
+            profitLoss = 0;
+          } 
+        
+        
+        betIdArray.push(betId)
+        userIdArray.push(bet.userId)
+        const directShareData = await getShareChainData(bet.clientId);
 
-      transactionLogs.push(transaction);
-
-      if (directShareData) {
-        let crickInsertAmount = profitLoss
-        let casinoRemark = `betfairCasino - ${bet.casinoType} / -(${_date()})`;
-
-        let crickPushTransactionLog = {
-          amount: crickInsertAmount,
-          clientProfitLoss: crickInsertAmount,
-          marketId: roundId,
-          eventId: `${bet.eventId}-${_date()}`,
+        const transaction = {
+          amount: profitLoss,
+          clientProfitLoss: profitLoss,
+          marketId: bet.roundId,
+          eventId: bet.eventId,
           sportId: 1000000,
           seriesId: bet.eventId,
-          gameName: "casino",
-          transactionType: "profitLoss",
-          gameType: bet.casinoType,
-          marketType: "betfairCasino",
-          selectionId: bet.sid,
-          remarks: casinoRemark,
-          userId: bet.userId,
+          gameName: `betfairCasino`,
+          gameType: "betfairCasino",
+          marketType: "diamondCasino",
+          selectionId: bet.roundId,
+          userId: bet.clientId,
           ownerId: bet.ownerId,
           subownerId: bet.subownerId,
           superadminId: bet.superadminId,
@@ -4964,47 +5048,252 @@ const saveBetfairCasinoResults = async (req, res) => {
           masterId: bet.masterId,
           superagentId: bet.superagentId,
           agentId: bet.agentId,
-          clientId: bet.userId,
-          eventName: `${bet.casinoType}-(${_date()})`,
-          betId : betId
+          betId: betId,
+          isDeclare : 1 ,
+          forBet: 1,
+          date: bet.date,
+          remarks: `${bet.casinoType} (${bet.eventId}) bet  for roundId ${bet.roundId} for ${bet.playerName} `,
         };
 
-        directShareData.map((directShare) => {
-          crickPushTransactionLog[`${directShare.creatorUserType}LedgerAmount`] = directShare[`${directShare.creatorUserType}LedgerCasinoShare`] * crickInsertAmount / 100
-          crickPushTransactionLog[`${directShare.creatorUserType}ProfitLoss`] = directShare[`${directShare.creatorUserType}ProfitLossrCasinoShare`] * crickInsertAmount / 100
-        })
+        if (directShareData) {
+          for (const share of directShareData) {
+            transaction[`${share.creatorUserType}LedgerAmount`] =
+              (share[`${share.creatorUserType}LedgerCasinoShare`] * profitLoss) / 100;
+            transaction[`${share.creatorUserType}ProfitLoss`] =
+              (share[`${share.creatorUserType}ProfitLossrCasinoShare`] * profitLoss) / 100;
+          }
+        }
 
-        crickTransactionLogObj.push(crickPushTransactionLog);
+      
+        transactionLogs.push(transaction);
 
-      }
+        let statement = {
+          amount: profitLoss,
+          betId: betId,
+          marketId: bet.roundId,
+          eventId: bet.eventId,
+          selectionId: bet.roundId,
+          userId: bet.userId,
+          userType: "client",
+          statementFor: "diamondCasino",
+          gameType: `betfairCasino`,
+          sportsType: `casino`,
+          userRemark: `Betfair CasinoBet For ${bet.casinoType} Of (${bet.roundId}) for player ${bet.playerName}`,
+          remark: `Diamond CasinoBet For ${bet.casinoType} Of (${bet.roundId}) for player ${bet.playerName}`,
+        };
 
-      bulkUpdates.push({
-        updateMany: {
-          filter: { _id : bet._id },
-          update: {
-            $set: {
-              isDeclare: 1,
-              isPartiallyDeclare: 1,
-              profitLoss: profitLoss,
-              result: String(resultData.community_cards),
-              showResult: String(resultData.community_cards),
+        statementLog.push(statement);
+      
+
+
+        if (directShareData) {
+          let crickInsertAmount = profitLoss
+
+          let casinoRemark = `betfairCasino - ${bet.roundId} - ${bet.casinoType} / -(${_date()})`;
+
+          let crickPushTransactionLog = {
+            amount: crickInsertAmount,
+            clientProfitLoss: crickInsertAmount,
+            marketId: roundId,
+            eventId: `${bet.eventId}-${_date()}`,
+            sportId: 1000000,
+            seriesId: bet.eventId,
+            gameName: "casino",
+            transactionType: "profitLoss",
+            gameType: bet.casinoType,
+            marketType: "betfairCasino",
+            selectionId: roundId,
+            remarks: casinoRemark,
+            userId: bet.userId,
+            ownerId: bet.ownerId,
+            subownerId: bet.subownerId,
+            superadminId: bet.superadminId,
+            adminId: bet.adminId,
+            subadminId: bet.subadminId,
+            masterId: bet.masterId,
+            superagentId: bet.superagentId,
+            agentId: bet.agentId,
+            clientId: bet.userId,
+            eventName: `${bet.casinoType}-(${_date()})`,
+            betId: betId
+          };
+
+          directShareData.map((directShare) => {
+            crickPushTransactionLog[`${directShare.creatorUserType}LedgerAmount`] = directShare[`${directShare.creatorUserType}LedgerCasinoShare`] * crickInsertAmount / 100
+            crickPushTransactionLog[`${directShare.creatorUserType}ProfitLoss`] = directShare[`${directShare.creatorUserType}ProfitLossrCasinoShare`] * crickInsertAmount / 100
+          })
+
+          crickTransactionLogObj.push(crickPushTransactionLog);
+        }
+
+        bulkUpdates.push({
+          updateMany: {
+            filter: { _id: bet._id },
+            update: {
+              $set: {
+                isDeclare: 1,
+                isPartiallyDeclare: 1,
+                profitLoss: profitLoss,
+                result: String(winnerSelectionIdArray),
+                showResult: JSON.stringify(resultData),
+              },
             },
           },
-        },
-      });
+        });
 
-      redisCleanupSet.add(bet.roundId);
+        redisCleanupSet.add(bet.roundId);
+      }
     }
 
 
 
+// commissionLogic
+for (const [userId, rounds] of Object.entries(finalClientArray)) {
+  const directShareData = await getShareChainData(userId);
+  for (const [roundId, data] of Object.entries(rounds)) {
+    let profitLoss = data.profitLoss
+    let betTurnOver = data.betTurnOver
+    let matchShareArray = {
+      clientBetfairCommission : 2
+    }
+    if (profitLoss > 0) {
 
-    userIdArray.forEach(async (userId) => {
-        await emitToUser(`betUpdate`, {status : true } , userId)
-    })
+     let commissionData = betfairFancyCommissionHelper(
+                  profitLoss,
+                  betTurnOver,
+                  matchShareArray,
+                  directShareData
+     );
+      
+               const pushArrayTransactionComm = {
+                 amount: commissionData?.clientComm,
+                 clientAmount: commissionData?.clientComm,
+                 userId: data.userId,
+                 userType: "client",
+                 gameName: `betfairCasino`,
+                 gameType: "betfairCasino",
+                 subownerId: data.subownerId,
+                 ownerId: data.ownerId,
+                 superadminId: data.superadminId,
+                 adminId: data.adminId,
+                 subadminId: data.subadminId,
+                 masterId: data.masterId,
+                 superagentId: data.superagentId,
+                 agentId: data.agentId,
+                 clientId: data.userId,
+                 overallType: "betfairCasinoComm",
+                 marketId: roundId,
+                 isDeclare: 1,
+                 forBet: 1,
+                 isComm: 1,
+                 remarks: data.remarks,
+               };
+     
+               transactionLogs.push(pushArrayTransactionComm);
+     
+               const pushStatementLogComm = {
+                 userId: data.userId,
+                 amount: commissionData?.clientComm,
+                 userType: "client",
+                 gameType: "betfairCasino",
+                 sportsType: "casino",
+                 remark: `${data.remarks}`,
+                 userRemark: "Betfair Casino Comm",
+                 statementFor: "betfairCasinoComm",
+                 marketId: roundId,
+                 isComm: true,
+               };
+               statementLog.push(pushStatementLogComm);
+      
+     
+      const crickPushTransactionLogComm = {
+            amount: commissionData?.clientComm,
+            clientProfitLoss: commissionData?.clientComm,
+             marketId: roundId,
+             selectionId: roundId,
+            
+            sportId: 1000000,
+            gameName: "casino",
+            transactionType: "profitLoss",
+            marketType: "betfairCasino",
+            remarks: data.remarks,
+            userId: data.userId,
+            ownerId: data.ownerId,
+            subownerId: data.subownerId,
+            superadminId: data.superadminId,
+            adminId: data.adminId,
+            subadminId: data.subadminId,
+            masterId: data.masterId,
+            superagentId: data.superagentId,
+            agentId: data.agentId,
+            clientId: data.userId,
+            eventName: data.remarks,
+            isComm: 1,
+            
+                 ownerLedgerAmount: commissionData?.ownerLedgerSessionComm
+                   ? commissionData?.ownerLedgerSessionComm
+                   : 0,
+                 subownerLedgerAmount: commissionData?.subownerLedgerSessionComm
+                   ? commissionData?.subownerLedgerSessionComm
+                   : 0,
+                 superadminLedgerAmount: commissionData?.superadminLedgerSessionComm
+                   ? commissionData?.superadminLedgerSessionComm
+                   : 0,
+                 adminLedgerAmount: commissionData?.adminLedgerSessionComm
+                   ? commissionData?.adminLedgerSessionComm
+                   : 0,
+                 subadminLedgerAmount: commissionData?.subadminLedgerSessionComm
+                   ? commissionData?.subadminLedgerSessionComm
+                   : 0,
+                 masterLedgerAmount: commissionData?.masterLedgerSessionComm
+                   ? commissionData?.masterLedgerSessionComm
+                   : 0,
+                 superagentLedgerAmount: commissionData?.superagentLedgerSessionComm
+                   ? commissionData?.superagentLedgerSessionComm
+                   : 0,
+                 agentLedgerAmount: commissionData?.agentLedgerSessionComm
+                   ? commissionData?.agentLedgerSessionComm
+                   : 0,
+     
+                 ownerProfitLoss: commissionData?.ownerProfitLossSessionComm
+                   ? -1 * commissionData?.ownerProfitLossSessionComm
+                   : 0,
+                 subownerProfitLoss: commissionData?.subownerProfitLossSessionComm
+                   ? -1 * commissionData?.subownerProfitLossSessionComm
+                   : 0,
+                 superadminProfitLoss: commissionData?.superadminProfitLossSessionComm
+                   ? -1 * commissionData?.superadminProfitLossSessionComm
+                   : 0,
+                 adminProfitLoss: commissionData?.adminProfitLossSessionComm
+                   ? -1 * commissionData?.adminProfitLossSessionComm
+                   : 0,
+                 subadminProfitLoss: commissionData?.subadminProfitLossSessionComm
+                   ? -1 * commissionData?.subadminProfitLossSessionComm
+                   : 0,
+                 masterProfitLoss: commissionData?.masterProfitLossSessionComm
+                   ? -1 * commissionData?.masterProfitLossSessionComm
+                   : 0,
+                 superagentProfitLoss: commissionData?.superagentProfitLossSessionComm
+                   ? -1 * commissionData?.superagentProfitLossSessionComm
+                   : 0,
+                 agentProfitLoss: commissionData?.agentProfitLossSessionComm
+                   ? -1 * commissionData?.agentProfitLossSessionComm
+                 : 0,
+                 betFor: "betfairCasino",
+          };
 
-    
+          crickTransactionLogObj.push(crickPushTransactionLogComm);
+      
+    }
+  }
+}
 
+
+  
+   // _d(betIdArray, "betIdArray")
+
+
+  
     let crickWhere = {
       marketType: "betfairCasino",
       betId : {$in : betIdArray}
@@ -5012,28 +5301,90 @@ const saveBetfairCasinoResults = async (req, res) => {
 
     let transactionLogWhere = {
       betId: { $in: betIdArray },
-      gameName: `betfairCasino`,
+      gameType: `betfairCasino`,
     }
 
-    await Promise.allSettled([
+
+    let statementLogWhere = {
+      betId: { $in: betIdArray },
+      gameType: `betfairCasino`,
+    }
+
+
+    let [crickDeleteStatus , transactionDeleteStatus , statementDeleteStatus] = await Promise.allSettled([
       crickTransactionLog.deleteMany(crickWhere),
       TransactionLogModel.deleteMany(transactionLogWhere),
+      StatementModel.deleteMany(statementLogWhere),
     ]);
 
-    /* ---------------- EXECUTE DB OPS IN PARALLEL ---------------- */
-    await Promise.allSettled([
+
+     let crickWhereComm = {
+      marketType: "betfairCasino",
+      marketId: { $in: roundIdArray },
+      isComm :1
+    }
+
+    let transactionLogWhereComm = {
+      marketId: { $in: roundIdArray },
+      isComm: 1,
+      gameType: "betfairCasino",
+      forBet :1
+    }
+
+
+    let statementLogWhereComm = {
+      marketId: { $in: roundIdArray },
+      isComm: 1,
+      gameType: `betfairCasino`,
+    }
+
+
+      let [crickDeleteStatusComm , transactionDeleteStatusComm , statementDeleteStatusComm] = await Promise.allSettled([
+        crickTransactionLog.deleteMany(crickWhereComm),
+        TransactionLogModel.deleteMany(transactionLogWhereComm),
+        StatementModel.deleteMany(statementLogWhereComm),
+      ]);
+    
+    
+    
+    // _d(transactionDeleteStatusComm , "transactionDeleteStatusComm")
+    // _d(transactionLogWhere , "transactionLogWhere")
+    // _d(statementLog , "statementLog")
+    // _d(transactionLogs , "transactionLogs")
+    // _d(crickTransactionLogObj , "crickTransactionLogObj")
+    // _d("stop")
+    // _dx(transactionLogWhereComm , "transactionLogWhereComm")
+    
+
+    let [transactionUpdate , crickUpdate , statementUpdate , bulkUpdate , removeRedis] = await Promise.allSettled([
       TransactionLogModel.length && TransactionLogModel.insertMany(transactionLogs),
       crickTransactionLog.length && crickTransactionLog.insertMany(crickTransactionLogObj),
+      StatementModel.length && StatementModel.insertMany(statementLog),
       bulkUpdates.length && casinoBetModel.bulkWrite(bulkUpdates, { ordered: false }),
       client.srem("betfairCasinoRoundId", ...Array.from(redisCleanupSet)),
     ]);
+
+
+   // _d(transactionUpdate, "transactionUpdate")
+    
+    // _d(crickUpdate, "crickUpdate")
+    
+     const updateUserCoins = await updateBulkCoinsExposureUserByMarketId(
+      userIdArray
+    );
+    
+
+    userIdArray.forEach(async (userId) => {
+        await emitToUser(`betUpdate`, {status : true } , userId)
+    })
+
 
     return res
       ? SendResponse(res, "success", "Result saved successfully")
       : successRoundIds;
 
   } catch (error) {
-    _d("❌ saveAvaitorResults error:", error);
+    _d("❌ saveBetfairCasioResults error:", error);
     if (res) return SendResponse(res, "error", "Internal server error");
     throw error;
   }

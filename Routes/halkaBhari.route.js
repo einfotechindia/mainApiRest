@@ -40,4 +40,26 @@ router.post(
 );
 
 
+router.post(
+  "/clientProfitLossByMarket",
+  verifyToken,
+  halkaBhariService.clientProfitLossByMarket
+);
+
+
+router.post(
+  "/fancyScale",
+  verifyToken,
+  halkaBhariService.fancyScale
+);
+
+
+router.post(
+  "/matchScale",
+  verifyToken,
+  halkaBhariService.matchScale
+);
+
+
+
 module.exports = router;

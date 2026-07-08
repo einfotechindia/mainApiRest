@@ -181,15 +181,15 @@ const bonusArray = {
 const betfairMaximumAllowOddsBySportWise = {
   4 : {
     sportType : "Cricket",
-    maxOdds : 100
+    maxOdds : 50
   },
   1 : {
     sportType : "Soccer",
-    maxOdds : 100
+    maxOdds : 50
   },
   2 : {
-    sportType : "Soccer",
-    maxOdds : 100
+    sportType : "Tennis",
+    maxOdds : 50
   },
   4339 : {
     sportType : "Greyhound Racing",

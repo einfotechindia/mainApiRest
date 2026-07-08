@@ -30,35 +30,35 @@ router.post(
 
 router.post(
   "/diamondDepositWithdraw",
-   verifyToken,
+  verifyToken,
   diamondController.diamondDepositWithdraw
 );
 
 
 router.post(
   "/diamondSettlement",
-   verifyToken,
+  verifyToken,
   diamondController.diamondSettlement
 );
 
 
 router.post(
   "/diamondBalanceSheet",
-   verifyToken,
+  verifyToken,
   diamondController.diamondBalanceSheet
 );
 
 
 router.post(
   "/diamondDashboard",
-   verifyToken,
+  verifyToken,
   diamondController.diamondDashboard
 );
 
 
 router.post(
   "/diamondAccountStatement",
-   verifyToken,
+  verifyToken,
   diamondController.diamondAccountStatement
 );
 

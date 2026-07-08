@@ -49,6 +49,14 @@ const SportMarketListSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    betDealy: {
+      type: Number,
+      default: 0,
+    },
+    maxBet: {
+      type: Number,
+      default: 0,
+    },
     selectionIdData: {},
   },
   {

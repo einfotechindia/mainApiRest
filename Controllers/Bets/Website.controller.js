@@ -1142,7 +1142,7 @@ const mergeLedger = async (req, res) => {
         subownerId: ledgerData.subownerId,
         ownerId: ledgerData.ownerId,
         userType: ledgerData.userType,
-        ledgerType: "settle",
+        ledgerType: "oldLedger",
         eventName: "old Ledger",
       }));
 
@@ -1190,10 +1190,8 @@ const mergeTransaction = async (req, res) => {
       status: 1,
     });
 
-
     await StatementModel.deleteMany(where);
     await TransactionLogModel.deleteMany(where);
-
 
     const CHUNK_SIZE = 5000;
     for (let i = 0; i < userData.length; i += CHUNK_SIZE) {
@@ -1203,6 +1201,7 @@ const mergeTransaction = async (req, res) => {
       const transactionAllData = [];
 
       for (const user of chunk) {
+
         statementAllData.push({
           userId: user.userId,
           username: user.username,
@@ -1231,6 +1230,9 @@ const mergeTransaction = async (req, res) => {
           ownerId: user.ownerId,
         });
       }
+
+
+      
 
       if (statementAllData.length) {
         await StatementModel.insertMany(statementAllData, { ordered: false });
@@ -2287,6 +2289,7 @@ const updateExposureOfUser = async (req, res) => {
       const errorMessages = error.details.map((detail) => detail.message);
       return SendResponse(res, "error", "Failed In validation", errorMessages);
     }
+    
     let username = bodyData.username;
     let userData = await getUserIdByUsername(username);
     if (userData.status != "success") {
@@ -3141,7 +3144,16 @@ const deleteUserData = async (req, res) => {
     );
   }
 
-  let deleteuserDataId = bodyData.userId
+  if (bodyData.username) {
+    let username = bodyData.username;
+    let userData = await getUserIdByUsername(username);
+    if (userData.status != "success") {
+      return SendResponse(res, "error", userData.msg);
+    }
+    bodyData.userId = userData.userDetails.userId
+  }
+
+
   let where = await whereHelper(loggedUserData, { _id: new ObjectId(bodyData.userId) })
   let userData = await UserModel.findOne(where)
 
@@ -3166,7 +3178,7 @@ const deleteUserData = async (req, res) => {
   }
 
   _d(userData.username, userData.name)
-  // _dx(deleteWhere)
+  _d(deleteWhere)
 
   let returnArray = {}
 
@@ -5609,6 +5621,51 @@ const userExposureList = async (req, res) => {
   return SendResponse(res, "success", "", exposerList);
 };
 
+const userExposureListUpdateBulk = async (req, res) => {
+  try {
+    const loggedUserData = req.loggedInUser;
+
+    const where = await whereHelper(loggedUserData, {
+      exposure: { $lt: 0 },
+      userType: "client",
+    });
+
+    const exposerList = await UserModel.find(
+      where,
+      {
+        exposure: 1,
+        username: 1,
+        userId: 1,
+        userType: 1,
+        coins: 1,
+        name: 1,
+        totalProfitLoss: 1,
+        creatorShareData: 1,
+      }
+    ).lean();
+    await Promise.all(
+      exposerList.map((user) =>
+        updateCoinsTbl(user.userId, user.userType)
+      )
+    );
+    return SendResponse(
+      res,
+      "Update Exposure Success",
+      "",
+      exposerList
+    );
+  } catch (error) {
+    console.error("userExposureListUpdateBulk Error:", error);
+    return SendResponse(
+      res,
+      "Something went wrong",
+      error.message,
+      [],
+      false
+    );
+  }
+};
+
 
 module.exports = {
   createDomain,
@@ -5700,5 +5757,6 @@ module.exports = {
   importFancyCateogeory,
   getFancyCateogeoryAuditLog,
   validateMultipleFancy,
-  userExposureList
+  userExposureList,
+  userExposureListUpdateBulk
 };

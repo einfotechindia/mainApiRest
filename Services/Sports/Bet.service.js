@@ -201,6 +201,7 @@ const getNewOpenBetsPosition = async (userId, marketId) => {
   const marketData = await sportsMarketListModel.findOne({
     marketId: marketId,
   });
+  
   if (!marketData) {
     return returnResponse(
       "error",
@@ -315,13 +316,22 @@ const checkLiveMatchOdds = async (reqData, oddsRange = 0 , isCombinedNew = false
     getSettingData(),
   ]);
 
-
   if (!matchData) {
     return returnResponse(
       "error",
       "Something Went Wrong ! We are not getting match data"
     );
   }
+
+  let marketListObj = {}
+  let betfairMarketListAll = matchData.marketList ? matchData.marketList : []
+  if (betfairMarketListAll && betfairMarketListAll.length > 0) {
+    betfairMarketListAll.map((mar) => {
+      marketListObj[mar.marketId] = mar
+    })
+  }
+
+
 
   if (matchData.cacheUrl) {
     oddsUrl = matchData.cacheUrl;
@@ -341,32 +351,8 @@ const checkLiveMatchOdds = async (reqData, oddsRange = 0 , isCombinedNew = false
   if (reqData && reqData.isLineMarket) {
     isLineMarket = true
   }
-  const defaultBetDelay = Number(matchData.betDelayTime) || 0;
-  const betDelaySetting = matchData.betDelaySetting ?? {};
 
-  const betDelayKeyByBetFor = {
-    fancy: "fancyBetDelay",
-    toss: "tossBetDelay",
-    matchOdds: "matchOddsBetDelay",
-    tiedMatch: "tieBetDelay",
-    odds: "bookMakerBetDelay",
-    line:"lineMarketfancyBetDelay"
-  };
-
-  const chosenKey = isLineMarket ? betDelayKeyByBetFor["line"] : betDelayKeyByBetFor[reqData.betFor];
-  
-  let betDelayTime = Number(defaultBetDelay);
-  if (chosenKey && isFinite(Number(betDelaySetting[chosenKey]))) {
-    const override = Number(betDelaySetting[chosenKey]);
-    if (!Number.isNaN(override) && override >= 0) betDelayTime = override;
-  }
-
-  if (betDelayTime && betDelayTime != 0) {
-    await sleep(betDelayTime * 1000);
-  }
-
-  let betfairMarketList = matchData.marketList ? matchData.marketList : []
-  betfairMarketList = betfairMarketList.map(item => item.marketType)
+  let betfairMarketList = betfairMarketListAll.map(item => item.marketType)
   let manualMarketArray = [
     "matchOdds",
     "tiedMatch",
@@ -380,14 +366,21 @@ const checkLiveMatchOdds = async (reqData, oddsRange = 0 , isCombinedNew = false
     oddsUrl = matchData.cacheUrl;
   }
 
+  let isBetfairFlag = false
   if (reqData.betfairMarketId && oddsTypesUsingMarketCache.has(reqData.oddsType)) {
     oddsUrl = `${settingData.betfairCacheUrlByMarketId ?? ""}${reqData.betfairMarketId}`;
     if (settingData.betfairSocketUrl && settingData.betfairSocketUrl != "") {
       oddsUrl = `${settingData.betfairSocketUrl}v2/api/fetchMarketOdds?marketId=${reqData.betfairMarketId}`;
     }
+    isBetfairFlag = true
   }
 
-
+   let finalMarketData  = {}
+   if (isBetfairFlag && marketListObj[reqData.betfairMarketId]) {
+    finalMarketData = marketListObj[reqData.betfairMarketId]
+   }
+  
+  
 
   let fetchFromRedis = false
   if (settingData.isBookmakerRedis && (betFor === "odds" || betFor == "toss" || betFor === "fancy")) {
@@ -397,12 +390,49 @@ const checkLiveMatchOdds = async (reqData, oddsRange = 0 , isCombinedNew = false
   if (settingData.isBetFairRedis && (betFor === "matchOdds" || betFor == "tiedMatch" || betFor == "Over/Under 1.5 Goals" || betFor == "Over/Under 2.5 Goals" | betFor == "To Win the Toss")) {
     fetchFromRedis = true
   }
+
+
+
+
+
+  const defaultBetDelay = Number(matchData.betDelayTime) || 0;
+  const betDelaySetting = matchData.betDelaySetting ?? {};
+  const betDelayKeyByBetFor = {
+    fancy: "fancyBetDelay",
+    toss: "tossBetDelay",
+    matchOdds: "matchOddsBetDelay",
+    tiedMatch: "tieBetDelay",
+    odds: "bookMakerBetDelay",
+    line:"lineMarketfancyBetDelay"
+  };
+  const chosenKey = isLineMarket ? betDelayKeyByBetFor["line"] : betDelayKeyByBetFor[reqData.betFor];
+  let betDelayTime = Number(defaultBetDelay);
+  if (chosenKey && isFinite(Number(betDelaySetting[chosenKey]))) {
+    const override = Number(betDelaySetting[chosenKey]);
+    if (!Number.isNaN(override) && override >= 0) betDelayTime = override;
+  }
+
+  if (isBetfairFlag && finalMarketData && finalMarketData.betDelay && finalMarketData.betDelay != 0) {
+    betDelayTime = finalMarketData.betDelay
+  }
+
+  if (betDelayTime && betDelayTime != 0) {
+    await sleep(betDelayTime * 1000);
+  }
+  
+
+const playStatusKey = Object.hasOwn(finalMarketData, "playStatus");
+
+if (isBetfairFlag && finalMarketData && !finalMarketData.playStatus  && playStatusKey)   {
+    return returnResponse(
+      "error",
+      "bet is off on this particualr betfair Market"
+    );
+ }
+  
+
   getTimeDifference?.(t0, "axios start");
   let oddsData = {}
-
-
-
-// fetchFromRedis = false
 
   if (!fetchFromRedis) {
     const axiosPromise = axios
@@ -440,7 +470,6 @@ const checkLiveMatchOdds = async (reqData, oddsRange = 0 , isCombinedNew = false
     }
   }
 
-
   if (isCombinedNew) {
     return {
       oddsData: oddsData.data ? oddsData.data : oddsData,
@@ -449,31 +478,27 @@ const checkLiveMatchOdds = async (reqData, oddsRange = 0 , isCombinedNew = false
     }
   }
 
-  
   // _d(JSON.parse(matchData.maxMinCoins) , "matchData.maxMinCoins")
 
-let coinsSetting = {};
+  let coinsSetting = {};
+  let maxMinCoins = matchData?.maxMinCoins
+  
 try {
-  if (matchData?.maxMinCoins) {
-    coinsSetting =
-      typeof matchData.maxMinCoins === "string"
-        ? JSON.parse(matchData.maxMinCoins)
-        : matchData.maxMinCoins; 
-  } else {
-    coinsSetting = {};
-  }
-} catch (e) {
-  console.error("Invalid maxMinCoins JSON:", e);
-  coinsSetting = {};
+    if (maxMinCoins && typeof maxMinCoins === "string") {
+        const fixed = maxMinCoins.replace(/([{,])(\w+):/g, '$1"$2":');
+        coinsSetting = JSON.parse(fixed);
+    } else if (maxMinCoins && typeof maxMinCoins === "object") {
+        coinsSetting = maxMinCoins;
+    }
+} catch (err) {
+    console.log("Invalid maxMinCoins JSON:", err);
 }
-
-
-
+  
+  
   let sessionMaxAmount = coinsSetting.maximum_session_bet ?? 100000;
   let sessionMinAmount = coinsSetting.minimum_session_bet ?? 100;
   let oddsMaxAmount = coinsSetting.maximum_match_bet ?? 200000;
   let oddsMinAmount = coinsSetting.minimum_match_bet ?? 100;
-
 
   const oddsOverrideKey = {
     matchOdds: "maximum_matchOdds_coins",
@@ -501,6 +526,9 @@ try {
      oddsMaxAmount = settingData && settingData.maxGreyHoundOddsAmt ? settingData.maxGreyHoundOddsAmt : oddsMaxAmount
   }
       
+  if (isBetfairFlag && finalMarketData && finalMarketData.maxBet && finalMarketData.maxBet != 0) {
+    oddsMaxAmount = finalMarketData.maxBet
+  }
 
 
   const betAmount = reqData.amount;
@@ -546,8 +574,6 @@ try {
   }
 
 
-
-
   if (betFor == "toss" && !isToss) {
     return returnResponse(
       "error",
@@ -574,12 +600,17 @@ try {
     oddsData = oddsData.result;
     const oddsType = reqData.oddsType;
 
+
+
     if (oddsType == "bookmaker") {
       if (type != "K" && type != "k" && type != "L") {
         return returnResponse("error", "odds Expire due to wrong type");
       }
+
       checkOddsData = oddsData.team_data;
+
       sendOddsData = convertKeyObject(checkOddsData, "selectionid");
+
       finalOddsData = sendOddsData[selectionId + ""];
 
       const currentLaggai = parseFloat(finalOddsData.lgaai);
@@ -593,6 +624,7 @@ try {
         currentKhaai = currentLaggai + matchData.bookmakerRange / 100;
       }
 
+
         if (type == "K" && currentKhaai < odds) {
             odds = currentKhaai
         }
@@ -602,10 +634,7 @@ try {
              odds = currentLaggai
         }
 
-
       
-
-
       // if (type == "L" && odds + oddsRange < currentLaggai) {
       //   return returnResponse("error", "odds Expire");
       // }
@@ -672,12 +701,13 @@ try {
       finalOddsData = sendOddsData[selectionId + ""];
 
       if (finalOddsData.lgaai != 0 && matchData && matchData.tossRate && matchData.tossRate != 0 && matchData.tossRate > 0) {
-        finalOddsData.lgaai = matchData.tossRate
+        finalOddsData.lgaai = Number(matchData.tossRate)
       }
 
-      if (type == "L" && parseFloat(finalOddsData.lgaai) != odds) {
+      if (type == "L" && parseFloat(finalOddsData.lgaai) != parseFloat(odds)) {
         return returnResponse("error", "odds Expire");
       }
+
 
       if (
         (finalOddsData.khaai === 0 && finalOddsData.lgaai === 0) ||
@@ -703,6 +733,8 @@ try {
     oddsData = oddsData.result
     let run = reqData.run;
     let sessionData = oddsData.session;
+
+    // _d(oddsData.session , "oddsData.session")
     if (gtype == "betfair") {
       sessionData = oddsData.lineMarketData
     }
@@ -763,17 +795,28 @@ try {
     }
 
  
-
     if (
       run < 1 ||
-      odds == 0 ||
-      finalSessionData.oddsNo == 0 ||
-      finalSessionData.oddsYes == 0
+      odds == 0 
     ) {
       status = "error";
       message = `odds expire`;
       return returnResponse(status, message);
     }
+
+    if(type == "Y"  && finalSessionData.oddsYes == 0) {
+      status = "error";
+      message = `odds expire`;
+      return returnResponse(status, message);
+    }
+
+    if(type == "N" && finalSessionData.oddsNo == 0) {
+      status = "error";
+      message = `odds expire`;
+      return returnResponse(status, message);
+    }
+
+
 
 
     if (
@@ -809,6 +852,7 @@ try {
 
     oddsData = oddsData.data ? oddsData.data : oddsData
 
+  
     if (oddsData.length < 1) {
       return returnResponse("error", "odds Expire due to lenth issue");
     }
@@ -855,9 +899,6 @@ try {
     let odds = finalData.data;
     sendOddsData = odds;
 
-
-
-
     if (sendOddsData.lgaai < 0 || sendOddsData.khaai < 0) {
       return returnResponse("error", "odds Expire");
     }
@@ -885,7 +926,6 @@ try {
           return returnResponse("error", "we can accept bet more then 10 odds");
         }
       }
-
 
       let teamName = odds.team_name
       if (matchData.sportId == 1 && /goals?/i.test(teamName)) {
@@ -1996,93 +2036,7 @@ const sessionPositionUserWise = async (userData, marketId) => {
   return resData;
 };
 
-const insertBetfairMarket = async (eventId, sportData = {} , settingData={}) => {
-  if (!sportData.otherMarketCacheUrl) {
-    sportData = await sportsListModel.findOne({ eventId: eventId })
-  }
-  let marketData = {}
-  let hitUrl = `${sportData?.betfairSocketUrl}v1/centerPanel/getSportDataByEventId?eventId=${eventId}`
 
-  //_d(hitUrl, "hitUrl")
-
-  let fetchOddsData = await axios.get(hitUrl);
-  if (fetchOddsData.data) {
-    marketData = fetchOddsData
-  }
-  let returnData = []
-
-
-  if (marketData.data.data) {
-    let marketList = marketData?.data?.data?.marketData;
-    let allMarket = [];
-    marketList.map((market) => {
-      let runners = []
-      let teamSelectionData = []
-      if (market.teamSelectionData) {
-        teamSelectionData = JSON.parse(market.teamSelectionData)
-      }
-      if (market.runners) {
-        runners = market.runners
-      }
-      if (runners.length > 0) {
-        runners.map((teamData, key) => {
-          runners[key].runnerName = teamData.selectionName ? teamData.selectionName : teamData.runnerName
-        })
-        teamSelectionData = runners
-      }
-
-      let marketType = market.market_type ? market.market_type : market.marketType
-      if (!marketType && market.marketName) {
-       marketType =  market.marketName
-      }
-
-      let playStatus = true
-
-      let pushData = {
-        marketId: market.market_id ? market.market_id : market.marketId,
-        marketType:marketType ,
-        eventId: sportData.eventId,
-        matchName: sportData.matchName,
-        sportName: sportData.matchName,
-        sportId: sportData.sportId,
-        seriesId: sportData.seriesId,
-        status: sportData.status,
-        playStatus: playStatus,
-        selectionIdData: teamSelectionData,
-      };
-      allMarket.push(pushData);
-    });
-
-    let previourMarketList = sportData?.marketList || [];
-    let newMarketList = Object.values(allMarket || {});
-    let merged = [...previourMarketList, ...newMarketList];
-    let map = new Map();
-    for (let item of merged) {
-      map.set(item.marketId, item);
-    }
-
-    let matchData = {
-      marketList: allMarket
-    };
-
-
-    const update = await sportsListModel.findOneAndUpdate(
-        { eventId: eventId },
-        { $set: matchData },
-        { new: true } // returns updated doc
-      );
-      
-    
-    //_d(allMarket , "allMarket")
-      await sportsMarketListModel.deleteMany({ eventId: eventId });
-      await sportsMarketListModel.create(allMarket)
-      await setSportsInRedis();
-      
-    returnData = allMarket
-  }
-
-  return returnResponse("success", "betfair market updated successfully", returnData);
-};
 
 const saveSportsListByNewCenterPanel = async () => {
   _d(`match list save script start at ${_date_time()}`);
@@ -2250,7 +2204,7 @@ const saveSportsData = async (sportData, settingData) => {
         };
 
 
-        _d(matchData.maxMinCoins)
+       // _d(matchData.maxMinCoins)
 
 
         let isMatchExists = await sportsListModel.countDocuments({
@@ -2492,8 +2446,6 @@ const saveRacingEvents = async (racingData = {}, settingData = {}) => {
 
 
 
-
-
 const insertBetfairMarketForRacing = async (eventId, sportData = {}, runners) => {
   if (runners.length > 0) {
     runners.map((teamData, key) => {
@@ -2502,6 +2454,9 @@ const insertBetfairMarketForRacing = async (eventId, sportData = {}, runners) =>
     teamSelectionData = runners
   }
   let marketId = sportData.marketId
+
+
+  
   let pushData = {
     marketId: sportData.marketId,
     marketType: "Match Odds",
@@ -2512,6 +2467,9 @@ const insertBetfairMarketForRacing = async (eventId, sportData = {}, runners) =>
     seriesId: sportData.seriesId,
     status: sportData.status,
     selectionIdData: teamSelectionData,
+    playStatus: true,
+    betDelay: 0,
+    maxBet : 0
   };
 
   let finalData = []
@@ -2617,6 +2575,139 @@ function calculateCombinedOddsNew(selections = [], runners = [] , type) {
 
 }
 
+const insertBetfairMarket = async (eventId, sportData = {} , settingData={}) => {
+  if (!sportData.otherMarketCacheUrl) {
+    sportData = await sportsListModel.findOne({ eventId: eventId })
+  }
+  let marketData = {}
+  let hitUrl = `${sportData?.betfairSocketUrl}v1/centerPanel/getSportDataByEventId?eventId=${eventId}`
+  let fetchOddsData = await axios.get(hitUrl);
+  if (fetchOddsData.data) {
+    marketData = fetchOddsData
+  }
+
+  let returnData = []
+  if (marketData.data.data) {
+    let marketList = marketData?.data?.data?.marketData;
+    if (marketList) {
+      returnData = await updateBetfairMarket(eventId, marketList , sportData) 
+    }
+  }
+
+  return returnResponse(returnData.status, returnData.message, returnData.data);
+};
+
+
+const updateBetfairMarket = async (eventId , marketList , sportData) => {
+  let returnData = []
+  let allMarket = [];
+
+    marketList.map((market) => {
+      let runners = []
+      let teamSelectionData = []
+      if (market.teamSelectionData) {
+        teamSelectionData = JSON.parse(market.teamSelectionData)
+      }
+      if (market.runners) {
+        runners = market.runners
+      }
+      if (runners.length > 0) {
+        runners.map((teamData, key) => {
+          runners[key].runnerName = teamData.selectionName ? teamData.selectionName : teamData.runnerName
+        })
+        teamSelectionData = runners
+      }
+
+      if (market.selectionIdData) {
+        teamSelectionData = market.selectionIdData
+      }
+
+      let marketType = market.market_type ? market.market_type : market.marketType
+      if (!marketType && market.marketName) {
+       marketType =  market.marketName
+      }
+
+      const playStatusKey = Object.hasOwn(market, "playStatus");
+      let playStatus = playStatusKey ? market.playStatus  : true
+      let betDelay = market.betDelay ? market.betDelay : 0
+      let maxBet = market.maxBet ? market.maxBet : 0
+
+      let pushData = {
+        marketId: market.market_id ? market.market_id : market.marketId,
+        marketType:marketType ,
+        eventId: sportData.eventId,
+        matchName: sportData.matchName,
+        sportName: sportData.matchName,
+        sportId: sportData.sportId,
+        seriesId: sportData.seriesId,
+        status: sportData.status,
+        selectionIdData: teamSelectionData,
+        playStatus: playStatus,
+        betDelay: betDelay,
+        maxBet: maxBet
+      };
+      allMarket.push(pushData);
+    });
+  
+  
+
+  let previourMarketList = sportData?.marketList || [];
+  
+  let newMarketList = Object.values(allMarket || {});
+  
+  let merged = [...previourMarketList, ...newMarketList];
+  
+  let map = new Map();
+  
+  for (let item of merged) {
+      map.set(item.marketId, item);
+  }
+  
+  let matchData = {
+      marketList: allMarket
+  };
+
+  
+  
+  
+  
+    const update = await sportsListModel.findOneAndUpdate(
+        { eventId: eventId },
+        { $set: matchData },
+        { new: true } // returns updated doc
+      );
+      
+  
+  
+  
+  
+  await sportsMarketListModel.deleteMany({ eventId: eventId });
+  await sportsMarketListModel.create(allMarket)
+  
+
+
+  // if (allMarket.length > 0) {
+  //     const bulkOps = allMarket.map((market) => ({
+  //       updateOne: {
+  //         filter: {
+  //           eventId: market.eventId,
+  //           marketId: market.marketId, // unique field
+  //         },
+  //         update: {
+  //           $set: market,
+  //         },
+  //         upsert: true,
+  //       },
+  //     }));
+  //     await sportsMarketListModel.bulkWrite(bulkOps);
+  // }
+  
+
+      
+      await setSportsInRedis();
+
+    return returnResponse("success", "betfair market updated successfully", allMarket);
+};
 
  
 
@@ -2651,5 +2742,6 @@ module.exports = {
   saveRacingEvents,
   insertBetfairMarketForRacing,
   getNewOpenBetsPosition,
-  calculateCombinedOddsNew
+  calculateCombinedOddsNew,
+  updateBetfairMarket
 };

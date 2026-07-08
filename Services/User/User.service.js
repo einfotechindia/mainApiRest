@@ -495,6 +495,8 @@ async function UserCreate(bodyData, loginUserData) {
       userId: creatorId,
     });
 
+
+
     if (!creatorShareData) {
       return returnResponse(
         "error",
@@ -502,7 +504,10 @@ async function UserCreate(bodyData, loginUserData) {
       );
     }
 
+   
+
     let creatorShareDataObj = creatorShareData.toJSON();
+    
     delete creatorShareDataObj._id;
     delete creatorShareDataObj.__v;
 
@@ -824,7 +829,8 @@ async function userUpdate(req, res) {
   } = req.body;
 
     const bodyData = req.body;
-   let  updateDirectShareData = false
+    let updateDirectShareData = false
+    
   const userData = await isUserAuthorizedToUpdate(req.loggedInUser, userId);
   if (!userData) {
     return SendResponse(
@@ -3160,6 +3166,8 @@ const shareDetails = async (parentData, userId) => {
     ["userId"]: userId,
   };
 
+
+  _d(queryObj , "queryObj")
   let shareDetails = await ShareModel.findOne(queryObj);
   if (!shareDetails) {
     return returnResponse("error", "Details Not Found");
@@ -4782,13 +4790,10 @@ const userSportsSetting = async (bodyData, loginData) => {
   const cacheKey = `sportsSetting:${userData.userId}`;
   await client.del(cacheKey);
 
-
 let downlineUserWhere = {
      [`${userData.userType}Id`] : new ObjectId(userData.userId)
 }
   
-
-
 maxAmountFields.forEach(field => {
   if (bodyData.hasOwnProperty(field)) {
         downlineUserWhere = {
@@ -4803,28 +4808,25 @@ maxAmountFields.forEach(field => {
     );
   }
 });
+  
 await Promise.all(maximumAmountUpdatePromise);
   
+  let flagUpdatePromise = []
+    sportsFlags.forEach(field => {
+      if (bodyData.hasOwnProperty(field)) {
+          downlineUserWhereFlag = {
+              [`${userData.userType}Id`]: new ObjectId(userData.userId),
+          },
+            flagUpdatePromise.push(
+              SportsSettingModel.updateMany(
+                downlineUserWhereFlag,
+                { $set: { [field]: bodyData[field] } }
+              )
+            );
+        }
+    });
+    await Promise.all(flagUpdatePromise);
 
-  
-
-let flagUpdatePromise = []
-sportsFlags.forEach(field => {
-  if (bodyData.hasOwnProperty(field)) {
-      downlineUserWhereFlag = {
-          [`${userData.userType}Id`]: new ObjectId(userData.userId),
-      },
-        flagUpdatePromise.push(
-          SportsSettingModel.updateMany(
-            downlineUserWhereFlag,
-            { $set: { [field]: bodyData[field] } }
-          )
-        );
-    }
-});
-await Promise.all(flagUpdatePromise);
-
-  
 
   await ActivityModel.create({
      username: userData.username,
@@ -4842,8 +4844,10 @@ await Promise.all(flagUpdatePromise);
 };
 
 
-const getUserSportsSetting = async (bodyData, loginData) => {
-  let userId = new ObjectId(bodyData.downlineUserId);
+const getUserSportsSetting = async (bodyData, loginData, userId) => {
+  if (!userId) {
+    userId = new ObjectId(bodyData.downlineUserId);
+  }
   const cacheKey = `sportsSetting:${userId}`;
   let cachedData = await client.get(cacheKey);
   if (cachedData) {
@@ -4853,7 +4857,9 @@ const getUserSportsSetting = async (bodyData, loginData) => {
       JSON.parse(cachedData)
     );
   }
+  
   let where = await whereHelper(loginData, { userId });
+
   let settingData = await SportsSettingModel.findOne(where);
   if (settingData) {
     await client.set(cacheKey, JSON.stringify(settingData), "EX", 36000);
@@ -4970,6 +4976,7 @@ const userConfig = async (bodyData, loginData) => {
   };
 
   whereObj = whereHelper(userData, whereObj);
+  
   if (bodyData.key != "downline") {
     whereObj.userId = userData._id;
   }
