@@ -12,6 +12,7 @@ const sportResultModel = require("../../Models/sportsResult.model");
 const OpenBestModel = require("../../Models/BetsList/OpenBetsList.model");
 const directUserShareModel = require("../../Models/User/directUserShareModel");
 const OddsPositionModel = require("../../Models/BetsList/OddsPosition.model");
+const {emitToUser , emitToMultipleUsers } =  require("../../socket.js")
 const { ObjectId } = require("mongodb");
 const BetService = require("./Bet.service");
 const { returnResponse } = require("../../Helpers/ResponseMapper");
@@ -137,6 +138,7 @@ let oddsDecision = async (
 
     let uniqueClientData = [];
     let finalClientArray = [];
+    let socketDecisionIdArray = [];
 
 
     oddsBetsList.map((oddsData) => {
@@ -240,6 +242,24 @@ let oddsDecision = async (
         } else {
           directShareData = directUserShareData[clientId]?.shareData || {}
         }
+
+
+
+        let socketRemark =  `You ${profitLoss < 0 ? `Loss`:`won`} ${Math.abs(profitLoss)} for ${oddsType}-${matchData.matchName}`
+        let socketObj = {
+          type : "odds",
+          profitLoss: profitLoss,
+          remark: socketRemark,
+          result : wonTeamName,
+          marketId: matchData.marketId,
+          betReload:true,
+        }
+        socketDecisionIdArray.push({
+          userId: clientId,
+          data : socketObj
+        })
+
+
 
 
         remarks = `${matchData.sportType}-${matchData.seriesName}-${matchData.matchName}-${oddsType}`;
@@ -454,9 +474,8 @@ let oddsDecision = async (
           }
 
 
+         // _d(commissionData , "commissionData")
 
-          _d(commissionData , "commissionData")
-          
 
           const crickPushTransactionLog = {
             eventName: matchData.matchName,
@@ -653,7 +672,9 @@ let oddsDecision = async (
        oddsType : oddsType
     }, {
         isDeclare : 1
-     })
+    })
+    
+    emitToMultipleUsers(socketDecisionIdArray , "decisionResult")
    
 
     return returnResponse("success", uniqueClientData, updateUserCoins);

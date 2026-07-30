@@ -5,7 +5,10 @@
   "main": "app.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "nodemon app.js"
+    "start": "nodemon app.js",
+    "seed": "node seeds/runSeeds.js --all",
+    "seed:pages": "node seeds/runSeeds.js --pages",
+    "seed:designations": "node seeds/runSeeds.js --designations"
   },
   "author": "shubham gupta",
   "license": "ISC",
@@ -59,6 +62,7 @@
     "nodemon": "^3.1.9",
     "os": "^0.1.2",
     "pm2": "^5.4.3",
+    "qrcode": "^1.5.4",
     "rate-limit-redis": "^4.3.1",
     "redis": "^4.7.0",
     "request": "^2.88.2",
@@ -68,6 +72,7 @@
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "socket.io-redis": "^6.1.1",
+    "speakeasy": "^2.0.0",
     "url": "^0.11.4",
     "util": "^0.12.5",
     "winston": "^3.17.0",

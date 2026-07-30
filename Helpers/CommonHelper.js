@@ -979,6 +979,14 @@ const oddsCommissionHelper = (profitLoss, matchShareArray, oddsType = {}) => {
     );
   }
 
+
+
+
+
+
+
+
+
   return returnData;
 };
 
@@ -1346,11 +1354,12 @@ const bookmakerCommissionHelper =  (
     if (directShareData) {
       for (let index = 0; index < directShareData.length; index++) {
         const element = directShareData[index];
+
         returnData[`${element.creatorUserType}LedgerBetfairComm`] =
           ( (Math.abs(profitLoss) * element[`${element.creatorUserType}LedgerMatchComm`])) / 100
         
         returnData[`${element.creatorUserType}ProfitLossBetfairComm`] =
-            ( -1 * (Math.abs(profitLoss) * element[`${element.creatorUserType}ProfitLossMatchComm`]))/100
+            ( (Math.abs(profitLoss) * element[`${element.creatorUserType}ProfitLossMatchComm`]))/100
       }
     }
 

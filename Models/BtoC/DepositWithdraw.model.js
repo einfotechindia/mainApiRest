@@ -128,6 +128,10 @@ let DepositWithdraw = new Schema(
       type: String,
       default: "",
     },
+    paymentTypeId: {
+     type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
   },
   {
     timestamps: true,

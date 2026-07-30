@@ -604,17 +604,8 @@ const userLogoutAndBlock = async (req, res) => {
     await UserModel.updateMany(where, updateArray);
     await client.del(blockUserId + "");
     if (siteSetting.IS_SOCKET) {
-      let userArray = [
-        {
-          userId: blockUserId + "",
-          data: {
-            isLogout: true,
-            userId: blockUserId + "",
-            authenticateToken: "",
-          },
-        },
-      ];
-      await throughSocketDataByAxios(userArray, "userLoggedOut");
+      const { emitToUser } = require("../../socket");
+      await emitToUser("userLoggedOut", { isLogout: true, userId: blockUserId + "" }, blockUserId);
     }
 
     return SendResponse(res, "success", "updated Successfully");

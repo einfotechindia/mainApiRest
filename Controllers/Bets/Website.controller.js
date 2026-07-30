@@ -3,7 +3,7 @@ const {
   returnResponse,
 } = require("../../Helpers/ResponseMapper");
 const { client } = require("../../Helpers/RedisHelper");
-const { getUserIdByUsername } = require("../../Helpers/UsersUtils");
+const { getUserIdByUsername , createShareDataByUserId , userParentDetails} = require("../../Helpers/UsersUtils");
 const { ObjectId } = require("mongodb");
 const Joi = require("joi");
 const { siteSetting, bonusArray } = require("../../Common/Constants");
@@ -51,6 +51,7 @@ const cateogeoryModel = require("../../Models/cateogeory.model");
 const accountTypeModel = require("../../Models/AccountType.model.js");
 const crickTransaction = require("../../Models/crickTransaction.model");
 const oddsBetsModel = require("../../Models/BetsList/OddsBetsList.model");
+const SubAgentModel = require("../../Models/SubAgent/SubAgent.model");
 const { checkWithdrawlAmount } = require("../../Services/Daman/daman.service");
 const casinoListJson = require("../../casinoList");
 var requestIp = require("request-ip");
@@ -169,16 +170,17 @@ const updateDomain = async (req, res) => {
       $set: updateData,
     });
 
-
-    // await throughSocketDataByAxios(userArrayList, "sportsListUpdate");
-
     if (bodyData.domainUrl) {
       await client.set(bodyData.domainUrl, JSON.stringify(bodyData));
     }
 
-    await updateDomainBySocket(req, {
-      isDomainSettingUpdate: true,
-    });
+    emitToAllActiveUsers("domainSetting", {
+      isCall : true,
+    })
+
+    // await updateDomainBySocket(req, {
+    //   isDomainSettingUpdate: true,
+    // });
 
     return SendResponse(res, "success", `Domain Updated Successfully`);
   } else {
@@ -233,17 +235,20 @@ const domainSettingByDomainName = async (req, res) => {
       domain = hostData;
     }
   }
-
-
+  
   let domainUrl = domain;
-
   let domainData = {};
-  if (isRedis) {
+ 
     domainData = await client.get(domainUrl);
     if (domainData) {
       domainData = JSON.parse(domainData);
     }
-  }
+  
+  
+  _d(domainUrl , "domainUrl")
+  
+  
+  
 
   if (!domainData) {
     domainData = await DomainModel.findOne({
@@ -280,6 +285,7 @@ const depositReq = async (req, res) => {
   const JoiSchema = Joi.object({
     amount: Joi.number().required(),
     utrNo: Joi.number().required(),
+    paymentTypeId : Joi.required()
   }).options({ abortEarly: true, allowUnknown: true });
   const { error } = JoiSchema.validate(bodyData);
   if (error) {
@@ -336,6 +342,7 @@ const depositReq = async (req, res) => {
     username: userData.username,
     screenShotImg: screenShotImg,
     ip: clientIp,
+    paymentTypeId : bodyData.paymentTypeId ? bodyData.paymentTypeId : null,
     accountMethod: bodyData.accountMethod ? bodyData.accountMethod : "account",
   };
 
@@ -654,14 +661,10 @@ const updateAccountDetails = async (req, res) => {
   const loggedUserData = req.loggedInUser;
   const userId = loggedUserData.userId;
   const userType = loggedUserData.userType;
-
   const userData = await UserModel.findOne({ _id: userId });
-
   if (!userData) {
     return SendResponse(res, "error", `user Not Fund`);
   }
-
-
 
   // _dx(bodyData, "bodyData")
 
@@ -1920,15 +1923,11 @@ const registerClient = async (req, res) => {
       const errorMessages = error.details.map((detail) => detail.message);
       return SendResponse(res, "error", "Failed In validation", errorMessages);
     }
-
     let websiteData = {};
     let websiteReqData = await getWebsiteDataByReq(req);
-
-
     if (websiteReqData.domainData) {
       websiteData = websiteReqData.domainData;
     }
-
     if (!websiteData || websiteData.isDeleted || !websiteData.status) {
       return SendResponse(res, "error", `Domain Data not found `);
     }
@@ -1943,7 +1942,6 @@ const registerClient = async (req, res) => {
       signupBonusValue = websiteData.signUpBonusSetting.signupBonusValue
     }
 
-
     if (!websiteData.isRegister) {
       return SendResponse(
         res,
@@ -1951,7 +1949,6 @@ const registerClient = async (req, res) => {
         `temporary signup is blocked by admin please try afte sometime`
       );
     }
-
 
     if (websiteData && websiteData.isSignUpOtp) {
       let mobileNo = bodyData.mobileNo
@@ -1981,104 +1978,141 @@ const registerClient = async (req, res) => {
       }
     }
 
-
-
-
     if (!websiteData.assignAgentId) {
       return SendResponse(res, "error", `agent not found something went wrong`);
     }
 
     let referralCode = ""
     let assignAgentId = new ObjectId(websiteData.assignAgentId);
-
     if (!websiteData || !websiteData.status || !assignAgentId) {
       return SendResponse(res, "error", "Domain Not Found");
     }
 
 
+    let formattedUsername = bodyData.username;
+    let mobileNo = bodyData.mobileNo
+    let checkFormattedUsername = formattedUsername.toUpperCase()
+    let [checkUsername, userCountMobile] = await Promise.all([
+      UserModel.countDocuments({
+          checkUsername: checkFormattedUsername,
+      }),
+      UserModel.countDocuments({
+      mobile: mobileNo
+      })
+    ])
+
+    if (checkUsername > 0) {
+      return SendResponse(res, "error", `Username - ${checkFormattedUsername} already Exists`); 
+    }
+
+    // mobileNo = String(mobileNo).trim();
+    // const mobileRegex = /^[6-9]\d{9}$/;
+    // if (!mobileRegex.test(mobileNo)) {
+    //   return SendResponse(res, "error", `Please enter a valid 10-digit mobile number`);
+    // }
+    
+    if (userCountMobile != 0) {
+      return SendResponse(res, "error", `"mobile no already exists`); 
+    }
+
+
+  
+
+    let subagentId = null
+    let subagentReferralCode = null
     if (bodyData.referralCode && bodyData.referralCode != "") {
       referralCode = bodyData.referralCode
-      let reffrelData = await MlmChainListModel.findOne({ referral: referralCode })
-      let userIdRefrel = reffrelData.userId
-      let reffrerUserData = await UserModel.findOne({
-        _id: new ObjectId(userIdRefrel)
-      })
-      if (reffrerUserData.agentId && reffrerUserData.agentId != null) {
-        assignAgentId = new ObjectId(reffrerUserData.agentId)
+      let newAgentAssignId = null
+      let [subagentData, refferUserData , reffrelData] = await Promise.all([
+        SubAgentModel.findOne({referralCode : referralCode}),
+        UserModel.findOne({ referral: referralCode }),
+        MlmChainListModel.findOne({ referral: referralCode })
+      ])
+      if (subagentData && subagentData != null && subagentData.agentId) {
+        newAgentAssignId = new ObjectId(subagentData.agentId)
+        subagentId = new ObjectId(subagentData._id)
+        subagentReferralCode = bodyData.referralCode
+      }
+       if (refferUserData && refferUserData != null && refferUserData.agentId) {
+        newAgentAssignId = new ObjectId(refferUserData.agentId)
+       }
+      
+      if (reffrelData) {
+        let userIdRefrel = reffrelData.userId
+        let reffrerUserData = await UserModel.findOne({
+          _id: new ObjectId(userIdRefrel)
+        })
+        if (reffrerUserData.agentId && reffrerUserData.agentId != null) {
+          newAgentAssignId = new ObjectId(reffrerUserData.agentId)
+        }
+      }
+
+      if (!newAgentAssignId || newAgentAssignId == null) {
+        return SendResponse(res, "error", "reffrelId is not found");
+      } else {
+        assignAgentId = newAgentAssignId
       }
     }
 
     const agentData = await userDetailsByUserId(assignAgentId);
-
-
     if (!agentData || agentData.userType != "agent") {
       return SendResponse(res, "error", "Agent Not Found");
     }
+
+
+   // _dx(agentData)
 
     const objectData = {
       parentId: assignAgentId,
       mobile: bodyData.mobileNo,
       password: bodyData.password,
       name: bodyData.name,
-      formatedUsername: bodyData.username,
+      checkUsername: checkFormattedUsername,
       username: bodyData.username,
       status: 1,
       userType: "client",
-      matchCommission: 0,
-      sessionCommission: 0,
-      casinoCommission: 0,
-      matkaCommission: 0,
+      matchCommission: agentData.userMatchCommission,
+      sessionCommission: agentData.userSessionCommission,
+      casinoCommission: agentData.userCasinoCommission,
+      matkaCommission: agentData.userMatkaCommission,
+      commissionType: agentData.userCommissionType,
       coins: 0,
-      reference: bodyData.domainUrl,
-      commissionType: "OnlyOnMinus",
-      betStatus: true,
-      matchStatus: true,
-      matkaStatus: true,
+      reference: websiteData.domainName,
+      betStatus: agentData.betStatus,
+      matchStatus: agentData.matchStatus,
+      matkaStatus: agentData.matkaStatus,
+      casinoStatus: agentData.casinoStatus,
+      intCasinoStatus: agentData.intCasinoStatus,
       isDirect: true,
-      intCasinoStatus: true,
       isPasswordChanged: true,
     };
 
-
-    let mobileNo = bodyData.mobileNo
-
-    let userCountMobile = await UserModel.countDocuments({
-      mobile: mobileNo
-    })
-
-    if (userCountMobile != 0) {
-      return SendResponse(
-        res,
-        "error",
-        "mobile no already exists",
-        error
-      );
-    }
-
     const userRes = await UserCreate(objectData, agentData);
-
     let clientId = null
     if (userRes && userRes.data) {
       clientId = userRes.data._id
     }
 
 
-
-    let isReferral = false;
-
-    websiteData.isReferral = true;
-
-    if (websiteData.isReferral) {
-      isReferral = websiteData.isReferral;
+    if (subagentId && subagentId != null) {
+      let updateObj = {
+        subagentId: subagentId,
+        subagentReferralCode: subagentReferralCode,
+      }
+      await UserModel.updateOne({
+        _id : clientId
+      }, {
+        $set : updateObj
+      })
     }
+    
 
-    if (isReferral) {
+    if (bodyData.referralCode && bodyData.referralCode!=null) {
       let registerData = await registerClientReferral(
         bodyData.referralCode,
         bodyData.username
       );
     }
-
 
     if (isSignupBonusCheck && signupBonusValue != 0) {
       let depositCoins = signupBonusType == "flat" ? signupBonusValue : (signupBonusValue * coins) / 100
@@ -2092,7 +2126,9 @@ const registerClient = async (req, res) => {
     }
 
 
+
     return SendResponse(res, userRes.status, userRes.message);
+
   } catch (error) {
     console.log(error);
     return SendResponse(
@@ -2210,6 +2246,8 @@ const getTransactionData = async (req, res) => {
   }
 
   let userId = new ObjectId(userData.userDetails.userId);
+
+
   let where = {
     amount: {
       $ne: 0,
@@ -2218,6 +2256,12 @@ const getTransactionData = async (req, res) => {
   };
 
   if (bodyData.isExposure && bodyData.isExposure == true) {
+    where.forBet = 1;
+    where.isDeclare = 0;
+  }
+
+
+  if (bodyData.isDeclare == false) {
     where.forBet = 1;
     where.isDeclare = 0;
   }
@@ -2360,8 +2404,6 @@ const updateInternationalCasinoListInRedis = async (req, res) => {
     if (databaseCateogeoryList) {
       databaseCateogeoryList = convertKeyObject(databaseCateogeoryList, "_id")
     }
-
-
 
     await client.set(`allInternationalCasinoList`, JSON.stringify(data));
 
@@ -2692,7 +2734,7 @@ const updateInternationalCasinoByOperating = async (req, res) => {
       },
       bodyData
     );
-
+    await client.hdel("internationalCasinoList", gameId);
     if (res) {
       return SendResponse(res, "success", "updated successfully");
     } else {
@@ -4023,7 +4065,7 @@ const upperLineLedger = async (req, res) => {
   ]);
 
   let returnObj = {
-    upplerLineLedger: getData[0] ? getData[0].ledger : getData[0].ledger
+    upplerLineLedger: getData[0] ? getData[0].ledger : []
   }
 
   if (res) {

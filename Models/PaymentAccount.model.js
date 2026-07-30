@@ -45,6 +45,18 @@ let PaymentAccount = new Schema(
     walletId: { type: String, default: "" },
     cryptoType: { type: String, default: "" },
     cryptoQrImage: { type: String, default: "" },
+    // Priority & Limits
+    priority: { type: Number, default: 0 },
+    dailyLimit: { type: Number, default: 0 }, // 0 = unlimited
+    todayDeposits: { type: Number, default: 0 },
+    todayDepositAmount: { type: Number, default: 0 },
+    todayDate: { type: String, default: "" },
+    // Schedule
+    scheduleEnabled: { type: Boolean, default: false },
+    scheduleFrom: { type: String, default: "00:00" }, // HH:mm
+    scheduleTo: { type: String, default: "23:59" },
+    // Domain assignment
+    assignedDomains: [{ type: String }],
     // Hierarchy
     userId: {
       type: mongoose.Schema.Types.ObjectId,

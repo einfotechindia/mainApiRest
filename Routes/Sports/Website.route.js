@@ -98,7 +98,7 @@ router.post(
 );
 
 router.post(`/updateSetting`, verifyToken, isOwnerAndStaff , websiteController.updateSetting);
-router.post(`/getSetting`, verifyToken, websiteController.getSetting);
+router.post(`/getSetting`, verifyToken, isOwnerAndStaff, websiteController.getSetting);
 router.post(`/mergeLedger`, verifyToken,isOwnerAndStaff, websiteController.mergeLedger);
 router.post(
   `/mergeTransaction`,
@@ -223,7 +223,6 @@ router.post(
 
 router.post(
   `/getCateogeory`,
-  verifyToken,
   websiteController.getCateogeory
 );
 
@@ -242,18 +241,12 @@ router.post(
   websiteController.updateExposureOfUser
 );
 
-
-
 router.post(
   `/userExposureListUpdateBulk`,
   verifyToken,
   isOwnerAndStaff,
   websiteController.userExposureListUpdateBulk
 );
-
-
-
-
 
 router.post(
   `/deleteUserData`,
@@ -361,7 +354,7 @@ router.post(`/sameBetsAtSameTime`, verifyToken, websiteController.sameBetsAtSame
 router.post(`/removeDuplicateUsersAndGetReport`, verifyToken, websiteController.removeDuplicateUsersAndGetReport);
 
 
-router.post(`/userExposureList`, verifyToken, websiteController.userExposureList);
+router.post(`/userExposureList`, verifyToken, isOwnerAndStaff, websiteController.userExposureList);
 
 
 // router.post(
@@ -392,8 +385,6 @@ router.post(
 
 router.post(`/hitReq`, websiteController.hitReq);
 
-
-
 router.post(
   `/getInternationalGroupCasinoList`,
   websiteController.getInternationalGroupCasinoList
@@ -421,6 +412,8 @@ router.post(
 
 router.post(
   `/distributeBonusToUpperline`,
+  verifyToken,
+  isOwnerAndStaff,
   websiteController.distributeBonusToUpperline
 );
 

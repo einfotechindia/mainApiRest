@@ -3,7 +3,7 @@ const moment = require("moment");
 const { ObjectId } = require("mongodb");
 const fs = require("fs");
 const axios = require("axios");
-
+const {emitToUser , emitToMultipleUsers } =  require("../../socket.js")
 const { SendResponse } = require("../../Helpers/ResponseMapper");
 const {
   updateBulkCoinsExposureUserByMarketId,
@@ -142,6 +142,7 @@ const sessionDecision = async (req, res) => {
 
     let uniqueClientData = [];
     let finalClientArray = [];
+    let socketDecisionIdArray = []
 
     sessionBetList.map((sessionData) => {
       let hasKey = finalClientArray.hasOwnProperty(sessionData.userId);
@@ -259,6 +260,7 @@ const sessionDecision = async (req, res) => {
       if (!finalClientArray[clientId]) continue;
 
       if (finalClientArray[clientId]) {
+
         let clientData = finalClientArray[clientId];
         const profitLoss = clientData.profitLoss;
         const sessionTurnOver = clientData.sessionTurnOver;
@@ -280,6 +282,23 @@ const sessionDecision = async (req, res) => {
         } else {
           directShareData = directUserShareData[clientId]?.shareData || {}
         }
+
+
+        let socketRemark =  `You ${profitLoss < 0 ? `Loss`:`won`} ${Math.abs(profitLoss)} for ${fancyName}`
+        let socketObj = {
+          type : "fancy",
+          profitLoss: profitLoss,
+          remark: socketRemark,
+          result : decisionRun,
+          marketId: matchData.marketId,
+          betReload:true,
+        }
+        socketDecisionIdArray.push({
+          userId: clientId,
+          data : socketObj
+        })
+
+
 
         const pushArrayTransaction = {
           amount: profitLoss,
@@ -693,10 +712,11 @@ const sessionDecision = async (req, res) => {
 
 
     await declarePositionAndLedger(marketId, "", true, uniqueClientData);
-
     await client.del(`sessionDecisionFor_${selectionId}_${marketId}`);
     await client.get(`fancyList_${matchData.eventId}`)
     await caclculateTime(startTime, `fancy decision end for ${fancyName}`)
+
+    await emitToMultipleUsers(socketDecisionIdArray , "decisionResult")
     
 
     if (res) {
@@ -721,6 +741,8 @@ const sessionDecision = async (req, res) => {
     await client.del(`sessionDecisionFor_${selectionId}_${marketId}`, true);
   }
 };
+
+
 const rollbackFancy = async (req, res) => {
   try {
     let bodyData = req.body;
@@ -888,6 +910,7 @@ const rollbackFancy = async (req, res) => {
       marketId,
       selectionId
     );
+
     return SendResponse(
       res,
       "success",
@@ -1069,12 +1092,15 @@ const oddsDecision = async (req, res) => {
   
   try {
     let settingData = await getSettingData();
+    
     if (!isToss) {
-        const checkSessionDecision = await FancyBetModel.countDocuments({
+      let checkSessionWhere = {
           marketId: marketId,
           isDeclare: 0,
           isDeleted: 0,
-        });
+      }
+      
+        const checkSessionDecision = await FancyBetModel.countDocuments(checkSessionWhere);
 
         if (checkSessionDecision) {
           if (res) {
@@ -1231,8 +1257,9 @@ const oddsDecision = async (req, res) => {
         matchData
       );
     
-    
     await client.del(`matchDecisionFor_${marketId}`);
+
+    
     if (res) {
       return SendResponse(
         res,
@@ -4474,7 +4501,7 @@ const generateCasinoClientLedger = async (req, res) => {
     if (bodyData.date) {
       todayDate = moment(bodyData.date).startOf("day").valueOf();
     }
-    let dateWhere = await dateWhereCond(bodyData.date);
+    let dateWhere = await dateWhereCond(bodyData.date , bodyData.date);
 
     let where = {
       overallType: "internationalCasino",
@@ -4776,7 +4803,7 @@ const generateUserLedger = async (date, dateWhere) => {
 
 
   dateWhere.$gte = dateWhere.$gte + ""
-  dateWhere.$lt = dateWhere.$lt + ""
+  dateWhere.$lte = dateWhere.$lte + ""
 
   const deleteCount = await ledgerModel.deleteMany({
     date: dateWhere,

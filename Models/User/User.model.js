@@ -324,6 +324,8 @@ const UserSchema = new mongoose.Schema(
     betChipsData: {},
     betMaxMinData: {},
     allowedDomains: {},
+    subagentReferralCode: { type: String, default: null },
+    subagentId: { type: mongoose.Schema.Types.ObjectId, default: null },
     parentData: {},
     extraData: {},
     minMaxComm: {},
@@ -343,17 +345,29 @@ const UserSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
-    isSettle : {
+    isSettle: {
       type: Boolean,
       default: false
     },
-    notes : {
+    notes: {
       type: String,
       default: ""
     },
-     isOtpRequired : {
+    isOtpRequired: {
       type: Boolean,
       default: false
+    },
+    twoFactorEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    twoFactorSecret: {
+      type: String,
+      default: null,
+    },
+    betDelay: {
+      type: Number,
+      default: 0
     },
   },
   {
@@ -460,7 +474,7 @@ const parentFields = [
       }
     }
   } catch (err) {
-   // console.error("Error checking/creating indexes:", err);
+    // console.error("Error checking/creating indexes:", err);
   }
 })();
 

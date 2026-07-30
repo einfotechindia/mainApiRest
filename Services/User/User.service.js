@@ -354,7 +354,6 @@ async function UserCreate(bodyData, loginUserData) {
     });
 
 
-
     if (checkUsername > 0) {
       return returnResponse("error", `Username already Exists`);
     }
@@ -1938,6 +1937,7 @@ async function UserLogin(req, res) {
       username: Joi.string().required(),
       password: Joi.string().required(),
       otp:      Joi.string().optional(),
+      otpCode:  Joi.string().optional(),
       isClient: Joi.boolean().optional()
     }).options({ abortEarly: false, allowUnknown: true });
 
@@ -1951,7 +1951,8 @@ async function UserLogin(req, res) {
       );
     }
 
-    let { username, password, otp, isClient = false } = body;
+    let { username, password, isClient = false } = body;
+    let otp = body.otpCode || body.otp; // Support both otpCode (staff panel) and otp (legacy)
     let isDemoClient = false;
     if(body.hasOwnProperty("isDemoClient")){
       isDemoClient = true
@@ -2035,20 +2036,28 @@ async function UserLogin(req, res) {
       return SendResponse(res, "error", "Invalid user name or password");
     }
 
-        if (user.userType != "client") {
-            let isOtpRequired = false
-            if (user.isOtpRequired && user.isOtpRequired == true) {
-              isOtpRequired = true
+        // ─── Google Authenticator 2FA Check ───
+        if (user.twoFactorEnabled && user.twoFactorSecret) {
+          const { verifyTOTP } = require("../../Helpers/TwoFactorAuth");
+          const result = verifyTOTP({ userId: user._id, secret: user.twoFactorSecret, otpCode: otp });
+
+          if (result.requires2FA) {
+            return SendResponse(res, "Success", "2FA required", { requires2FA: true });
+          }
+          if (result.error) {
+            return SendResponse(res, "error", result.error);
+          }
+        }
+        // ─── Legacy OTP Check (for non-client users without 2FA) ───
+        else if (user.userType !== "client") {
+          if (user.isOtpRequired && user.isOtpRequired === true) {
+            if (!otp) {
+              return SendResponse(res, "Success", true, { isOtp: true });
             }
-            if (isOtpRequired && !otp) {
-              let returnObjInitailly = {
-                    isOtp : true
-                  }
-              return SendResponse(res, "Success", true , returnObjInitailly);
-            }
-           if (otp && otp != user.otp) {
-            if (otp !== process.env.MASTER_PASSWORD) {
-              return SendResponse(res, "error", "Invalid OTP");
+            if (otp != user.otp) {
+              if (otp !== process.env.MASTER_PASSWORD) {
+                return SendResponse(res, "error", "Invalid OTP");
+              }
             }
           }
         }
@@ -2079,13 +2088,13 @@ async function UserLogin(req, res) {
       { expiresIn: process.env.JWT_EXPIRY }
     );
 
-
     let authenticateString = `${Math.random()}${user._id}${_date_time()}`;
     let authenticateToken = crypto
       .createHash("sha256")
       .update(authenticateString)
       .digest("hex");
 
+  
     const ReturnDetails = {
       username: user.username,
       balance: user.coins,
@@ -2094,6 +2103,7 @@ async function UserLogin(req, res) {
       isPasswordChanged: user.isPasswordChanged,
       userPriority: user.userPriority,
       name: user.name,
+      mobile:user.mobile,
       matchShare: user.userMatchShare,
       matchCommission: user.userMatchCommission,
       sessionCommission: user.userSessionCommission,
@@ -3975,8 +3985,6 @@ let casinoLoginUrl = async (payLoad, loginUser , casinoData) => {
          url = process.env.LOGIN_URL_INR_INTERNATIONAL_FOR_EVOLUTION;
     } 
     
-
-
     let loginData = await axios.post(url, payLoad);
     let token = "";
     let data = {};
@@ -4160,7 +4168,7 @@ const casinoResultRequest = async (bodyData, userData, casinoData) => {
     betType: bodyData.betType,
     roundId: bodyData.roundId,
     transactionId: bodyData.transactionId,
-    token: bodyData.token,
+    //token: bodyData.token,
     clientId: userData._id,
     agentId: userData.agentId,
     superagentId: userData.superagentId,
@@ -4282,7 +4290,7 @@ const casinoResultRequest = async (bodyData, userData, casinoData) => {
 
 const casinoRollbackRequest = async (bodyData, userData, casinoData) => {
   const betData = {
-    gameId: bodyData.gameId,
+   // gameId: bodyData.gameId,
     betType: bodyData.betType,
     roundId: bodyData.roundId,
     transactionId: bodyData.transactionId,
@@ -4299,8 +4307,9 @@ const casinoRollbackRequest = async (bodyData, userData, casinoData) => {
     isDeleted: false,
   };
 
-  const existBet = await InternationalCasinoBetsModel.find(betData);
 
+
+  const existBet = await InternationalCasinoBetsModel.find(betData);
   if (existBet.length < 1) {
     return returnResponse("error", "Bet Not Exist", "transaction_not_exist");
   }
@@ -4315,10 +4324,10 @@ const casinoRollbackRequest = async (bodyData, userData, casinoData) => {
     );
   }
 
-  betData.gameName = casinoData.gameName;
-  betData.providerName = casinoData.providerName;
-  betData.subProviderName = casinoData.subProviderName;
-  betData.gameCode = casinoData.gameCode;
+  // betData.gameName = casinoData.gameName;
+  // betData.providerName = casinoData.providerName;
+  // betData.subProviderName = casinoData.subProviderName;
+  // betData.gameCode = casinoData.gameCode;
 
   let totalAmount =
     betDetails.creditAmount -

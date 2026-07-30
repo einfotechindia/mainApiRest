@@ -4,6 +4,7 @@ const profitLossPosition = require("../../Models/BetsList/profitLossPosition.mod
 const fancyBetListModel = require("../../Models/BetsList/FancyBetsList.model");
 const oddsBetListModel = require("../../Models/BetsList/OddsBetsList.model");
 const crickTransaction = require("../../Models/crickTransaction.model");
+const LedgerModel = require("../../Models/Ledger.model");
 const { UserTypes } = require("../../Common/Constants");
 const { SendResponse } = require("../../Helpers/ResponseMapper");
 const {
@@ -12,6 +13,9 @@ const {
   convertKeyObject,
   whereHelper,
   dateWhereCond,
+  parentDataAppend,
+  _date_time,
+  getSettingData
 } = require("../../Helpers/CommonHelper");
 
 const {
@@ -22,7 +26,8 @@ const BetModel = require("../../Models/BetsList/OddsBetsList.model");
 const OddsPositionModel = require("../../Models/BetsList/OddsPosition.model");
 
 
-const BetService = require("../../Services/Sports/Bet.service")
+const BetService = require("../../Services/Sports/Bet.service");
+const CrickTransactionLogModel = require("../../Models/crickTransaction.model");
 
 
 const accountHalkaBhari = async (req, res) => {
@@ -320,11 +325,8 @@ const halkaBhariPlusMinus = async (req, res) => {
     userId = bodyData.userId;
   }
 
-
-
   let userWhere = {};
   let marketId = "";
-
 
   if (bodyData.marketId) {
     marketId = bodyData.marketId;
@@ -351,6 +353,9 @@ const halkaBhariPlusMinus = async (req, res) => {
     userWhere.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
   }
 
+
+  userWhere.transactionType = "profitLoss"
+
   userWhere = await whereHelper(loginData, userWhere);
 
   if (bodyData.downlineUserType) {
@@ -359,24 +364,88 @@ const halkaBhariPlusMinus = async (req, res) => {
 
   let group = {
     _id: `$${downlineUserType}Id`,
-    clientOddsAmount: { $sum: "$clientOddsAmount" },
-    clientSessionAmount: { $sum: "$clientSessionAmount" },
-    clientOddsComm: { $sum: "$clientOddsComm" },
-    clientSessionComm: { $sum: "$clientSessionComm" },
-    clientNetAmount: { $sum: "$clientNetAmount" },
-    userOddsComm: { $sum: `$${downlineUserType}OddsComm` },
-    userSessionComm: { $sum: `$${downlineUserType}SessionComm` },
-    userNetProfitLoss: { $sum: `$${downlineUserType}NetProfitLossSelf` },
-    userLedgerAmt: { $sum: `$${downlineUserType}LedgerAmt` },
+    userNetProfitLoss: {
+        $sum: {
+          $cond: [
+            { $eq: ["$isComm", 0] },
+            `$${downlineUserType}ProfitLoss`,
+            0
+          ]
+        }
+      },
+      userSessionComm: {
+        $sum: {
+          $cond: [
+            {
+              $and: [
+                { $eq: ["$isComm", 1] },
+                { $eq: ["$marketType", "fancy"] }
+              ]
+            },
+            `$${downlineUserType}ProfitLoss`,
+            0
+          ]
+        }
+      },
+        oddsComm: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $eq: ["$isComm", 1] },
+                  { $ne: ["$marketType", "fancy"] }
+                ]
+              },
+              `$${downlineUserType}ProfitLoss`,
+              0
+            ]
+          }
+    },
   }
 
   UserTypes.map((userType, key) => {
-    if (Userpriority >= key) {
-      group[`${userType}NetProfitLoss`] = { $sum: `$${userType}NetProfitLossSelf` }
+    group[`${userType}NetProfitLoss`] = {
+        $sum: {
+          $cond: [
+            { $eq: ["$isComm", 0] },
+            `$${userType}ProfitLoss`,
+            0
+          ]
+        }
+    }
+
+    group[`${userType}SessionComm`]  = {
+        $sum: {
+          $cond: [
+            {
+              $and: [
+                { $eq: ["$isComm", 1] },
+                { $eq: ["$marketType", "fancy"] }
+              ]
+            },
+            `$${userType}ProfitLoss`,
+            0
+          ]
+        }
+    }
+      
+       group[`${userType}oddsComm`]  ={
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $eq: ["$isComm", 1] },
+                  { $ne: ["$marketType", "fancy"] }
+                ]
+              },
+              `$${userType}ProfitLoss`,
+              0
+            ]
+          }
     }
   })
 
-  var resData = await profitLossPosition.aggregate([
+  var resData = await CrickTransactionLogModel.aggregate([
     {
       $match: userWhere,
     },
@@ -384,6 +453,7 @@ const halkaBhariPlusMinus = async (req, res) => {
       $group: group,
     },
   ]);
+
 
   let returnObj = [];
   let idArray = resData.map((item) => item._id);
@@ -398,8 +468,10 @@ const halkaBhariPlusMinus = async (req, res) => {
       userMatchShare: 1,
       creatorId: 1,
       creatorUserType: 1,
+      creatorShareData : 1
     }
   );
+
   if (downlineTypeData) {
     downlineTypeData = convertKeyObject(downlineTypeData, "_id");
   }
@@ -518,7 +590,7 @@ const halkaBhariPlusMinusMarketWise = async (req, res) => {
           ]
         }
       },
-        oddsComm: {
+        userOddsComm: {
           $sum: {
             $cond: [
               {
@@ -534,11 +606,24 @@ const halkaBhariPlusMinusMarketWise = async (req, res) => {
         }
     };
 
-    for (let i = 0; i <= userPriority; i++) {
-      group[`${UserTypes[i]}NetProfitLoss`] = {
-        $sum: `$${UserTypes[i]}ProfitLoss`
-      };
+
+UserTypes.map((userType) => {
+  group[`${userType}NetProfitLoss`] = {
+    $sum: {
+      $cond: [
+        { $eq: ["$isComm", 0] },
+        `$${userType}ProfitLoss`,
+        0
+      ]
     }
+  };
+});
+        
+    // for (let i = 0; i <= userPriority; i++) {
+    //   group[`${UserTypes[i]}NetProfitLoss`] = {
+    //     $sum: `$${UserTypes[i]}ProfitLoss`
+    //   };
+    // }
 
     const pipeline = [
       {
@@ -559,12 +644,19 @@ const halkaBhariPlusMinusMarketWise = async (req, res) => {
           amount: 1,
           isComm: 1,
           [`${userType}ProfitLoss`]: 1,
+          // ...Object.fromEntries(
+          //   UserTypes.slice(0, userPriority + 1).map(u => [
+          //     `${u}ProfitLoss`,
+          //     1
+          //   ])
+          // )
           ...Object.fromEntries(
-            UserTypes.slice(0, userPriority + 1).map(u => [
+            UserTypes.map(u => [
               `${u}ProfitLoss`,
               1
             ])
           )
+
         }
       },
 
@@ -650,9 +742,6 @@ const halkaBhariSportsProfitLoss = async (req, res) => {
 
 
 
-    _d(userDataArray)
-
-
     let returnData = [];
     for (const key in userDataArray) {
       if (userDataArray.hasOwnProperty(key)) {
@@ -662,6 +751,7 @@ const halkaBhariSportsProfitLoss = async (req, res) => {
         let downLineUserType = user.userType
         let downLineUserId = user.userId
 
+
         originalWhere[`${downLineUserType}Id`] = downLineUserId
 
         let group = {
@@ -670,7 +760,7 @@ const halkaBhariSportsProfitLoss = async (req, res) => {
             $sum: {
               $cond: [
                 {
-                  $and: [{ $eq: ["$gameType", "cricket"] }],
+                  $and: [{ $eq: ["$gameType", "Cricket"] } , { $ne: ["$marketType", "fancy"] }],
                 },
                 `$${downLineUserType}ProfitLoss`,
                 0,
@@ -734,9 +824,6 @@ const halkaBhariSportsProfitLoss = async (req, res) => {
           },
         }
 
-        if (downLineUserType == "client") {
-          group.userProfitLoss = "amount"
-        }
 
         var resData = await crickTransaction.aggregate([
           {
@@ -864,7 +951,6 @@ const monitoruser = async (req, res) => {
     console.log(``)
   }
 }
-
 
 const clientProfitLossByMarket = async (req, res) => {
   try {
@@ -1012,8 +1098,8 @@ const fancyScale = async (req, res) => {
     const bodyData = req.body;
     const loginData = req.loggedInUser;
     const where = await whereHelper(loginData, {
-      isDeleted: 0,
-      isDeclare: 1
+      transactionType: "profitLoss",
+      marketType : "fancy"
     });
     const userId = new ObjectId(bodyData.userId || loginData.userId);
 
@@ -1034,14 +1120,14 @@ const fancyScale = async (req, res) => {
           [`${downLineUserType}Id`]: downLineUserId,
         };
 
-        const resData = await fancyBetListModel.aggregate([
+        const resData = await CrickTransactionLogModel.aggregate([
           {
             $match: originalWhere,
           },
           {
             $group: {
               _id: `$${downLineUserType}Id`,
-              amount: { $sum: "$amount" },
+              amount: { $sum: `$amount` },
             },
           },
           {
@@ -1065,7 +1151,6 @@ const fancyScale = async (req, res) => {
 
 const returnData = results.filter(Boolean);
 
-
     return SendResponse(
       res,
       "success",
@@ -1082,15 +1167,14 @@ const returnData = results.filter(Boolean);
     );
   }
 };
-
 
 const matchScale = async (req, res) => {
   try {
     const bodyData = req.body;
     const loginData = req.loggedInUser;
     const where = await whereHelper(loginData, {
-      isDeleted: 0,
-      isDeclare : 1 
+      transactionType: "profitLoss",
+      betFor : "market"
     });
     const userId = new ObjectId(bodyData.userId || loginData.userId);
 
@@ -1111,7 +1195,7 @@ const matchScale = async (req, res) => {
           [`${downLineUserType}Id`]: downLineUserId,
         };
 
-        const resData = await oddsBetListModel.aggregate([
+        const resData = await CrickTransactionLogModel.aggregate([
           {
             $match: originalWhere,
           },
@@ -1125,8 +1209,6 @@ const matchScale = async (req, res) => {
             $sort: { _id: 1 },
           },
         ]);
-
-
 
     if (!resData.length) return null;
 
@@ -1161,6 +1243,629 @@ const returnData = results.filter(Boolean);
     );
   }
 };
+
+
+
+
+const halkaBhariSettlement = async (req, res) => {
+  try {
+    let bodyData = req.body
+    const loginData = req.loggedInUser;
+    let userId = bodyData.userId
+    let isCash = true
+   
+    let userWhere = await whereHelper(loginData, {
+      userId: new ObjectId(userId),
+      status: 1,
+      isDeleted: false,
+    })
+
+    let userData = await UserModel.findOne(
+      userWhere
+    );
+
+    if (!userData) {
+      return SendResponse(res, "error", "user Not Found");
+    }
+
+    if (!userData.status) {
+      return SendResponse(res, "error", "User Is Inactive Please Active First");
+    }
+
+    let creatorId = userData.creatorId
+
+    let creatorData = await UserModel.findOne(
+      {
+        userId: new ObjectId(creatorId)
+      }
+    );
+
+
+    let coins = Number(bodyData.amount)
+    if (!coins || coins == 0) {
+      return SendResponse(
+          res,
+          "error",
+          `amount value can not be zero`
+      );
+    }
+    
+    let updateCoins = -1 * coins
+ 
+    let creatorDepositWithdrawType = `Settlement deposit to ${userData.username}`;
+    let userDepositWithdrawType = `settlement deposit to ${userData.username}`;
+    let userStatementStatus = "deposit";
+
+    const creatorUsertypeId = `${creatorData.userType}Id`;
+    let creatorCoinsUpdated = coins;
+    if (creatorCoinsUpdated > 0) {
+      creatorDepositWithdrawType = `Settlement withdraw for  ${userData.username}`;
+    }
+
+    let creatorTransactionLog = {
+      amount: updateCoins,
+      userId: userData.creatorId,
+      userType: creatorData.userType,
+      overallType: "depositWithdraw",
+      remarks: `${creatorDepositWithdrawType}`,
+      ownerId: creatorData.ownerId,
+      subownerId: creatorData.subownerId,
+      superadminId: creatorData.superadminId,
+      adminId: creatorData.adminId,
+      subadminId: creatorData.subadminId,
+      masterId: creatorData.masterId,
+      superagentId: creatorData.superagentId,
+      agentId: creatorData.agentId,
+      clientId: creatorData.clientId,
+      isDeclare: 1,
+      isCash: 1,
+    }
+
+    const UsertypeId = `${userData.userType}Id`;
+
+     if (updateCoins < 0) {
+      userDepositWithdrawType = `settlment withdraw from  ${userData.username}`;
+      userStatementStatus = "settlement withdraw";
+     }
+    
+    
+      let receivedPaid =  updateCoins < 0 ? "received" : "paid"
+
+       let userCrickRemark = `${bodyData?.remark ? bodyData?.remark + "- " : ""} ${userData.username} (${userData.name}) Cash ${receivedPaid} from  ${loginData.username}} (${_date_time()})]`;
+    
+      let userCrickTransactionLog = {
+        amount: userData.userType == "client" ? updateCoins :  coins ,
+        transactionType: "ledger",
+        remarks: userCrickRemark,
+        userId: userData.userId,
+        userType: userData.userType,
+        ownerId: userData.ownerId,
+        subownerId: userData.subownerId,
+        superadminId: userData.superadminId,
+        adminId: userData.adminId,
+        subadminId: userData.subadminId,
+        masterId: userData.masterId,
+        superagentId: userData.superagentId,
+        agentId: userData.agentId,
+        clientId: userData.clientId,
+        creatorId: userData.creatorId,
+        [`${userData.userType}ProfitLoss`]: updateCoins,
+        [`${userData.userType}LedgerAmount`]: updateCoins,
+        isCash: true
+      };
+    
+    
+    let eventName = `Cash Liya Done By  ${loginData.username} (${loginData.name}) To ${userData.username} (${userData.name})`;
+    if (
+      (userData.userType == "client" && bodyData.amount < 0) ||
+      (userData.userType != "client" && bodyData.amount > 0)
+    ) {
+      eventName = `Cash Diya Done By  ${loginData.username} (${loginData.name}) To ${userData.username} (${userData.name})`;
+    }
+
+
+    let userLedgerObj = {
+      userId: userData.userId,
+      userType: userData.userType,
+      ledgerType: "settle",
+      remark: bodyData.remark ? bodyData.remark : "",
+      amount: coins,
+      eventName : eventName
+    }
+    userLedgerObj = await parentDataAppend(userData, userLedgerObj);
+
+     await Promise.all([
+       crickTransaction.create(userCrickTransactionLog),
+       LedgerModel.create(userLedgerObj)
+     ])
+  
+    return SendResponse(res, "success", "sellement Updated Successfully Done");
+
+  } catch (error) {
+    console.log(error, "error")
+  }
+
+}
+
+const halkaBhariDiamondProfitLoss = async (req, res) => {
+  try {
+    const bodyData = req.body;
+    const loginData = req.loggedInUser;
+    const where = await whereHelper(loginData, {
+      transactionType: "profitLoss",
+      marketType: "diamondCasino",
+    });
+
+    const userType = bodyData.userType || loginData.userType;
+    const userId = new ObjectId(bodyData.userId || loginData.userId);
+
+    if (bodyData.fromDate && bodyData.toDate) {
+      where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+    }
+
+    where[`${userType}Id`] = userId;
+
+    const group = {
+      _id: "$eventName",
+      userProfitLoss: { $sum: `$${userType}ProfitLoss` },
+      clientProfitLoss: { $sum: `$amount` },
+    };
+
+    const resData = await crickTransaction.aggregate([
+      { $match: where },
+      { $group: group },
+      { $sort: { _id: 1 } },
+    ]);
+
+    if (!resData.length) {
+      return SendResponse(res, "success", "data fetch successfully", []);
+    }
+
+    return SendResponse(
+      res,
+      "success",
+      "data fetch successfully",
+      resData
+    );
+  } catch (error) {
+    console.error(error);
+    return SendResponse(
+      res,
+      "error",
+      "Something went wrong",
+      null
+    );
+  }
+};
+
+
+const urbProfitLossReport = async (req, res) => {
+  try {
+    const bodyData = req.body;
+    const loginData = req.loggedInUser;
+    const where = await whereHelper(loginData, {
+      transactionType: "profitLoss",
+
+    });
+    const userType = bodyData.userType || loginData.userType;
+    const userId = new ObjectId(bodyData.userId || loginData.userId);
+
+    where[`${userType}Id`] = userId;
+
+    if (bodyData.marketId) {
+      where.marketId = bodyData.marketId
+    }
+
+     if (bodyData.selectionId) {
+      where.selectionId = bodyData.selectionId
+     }
+
+    let Userpriority = UserTypes.indexOf(userType);
+    let downlineUserType = UserTypes[Userpriority - 1];
+    
+  
+    const group = {
+      _id: `$${downlineUserType}Id`,
+      userProfitLoss: { $sum: `$${downlineUserType}ProfitLoss` },
+      userProfitLossWithComm: {
+        $sum: {
+          $cond: [
+            {
+              $and: [{ $eq: ["$isComm", 0] }],
+            },
+            `$${downlineUserType}ProfitLoss`,
+            0,
+          ],
+        },
+      },
+      userCommm: {
+        $sum: {
+          $cond: [
+            {
+              $and: [{ $eq: ["$isComm", 1] }],
+            },
+            `$${downlineUserType}ProfitLoss`,
+            0,
+          ],
+        },
+      },
+    };
+
+    const resData = await crickTransaction.aggregate([
+      { $match: where },
+      { $group: group },
+      { $sort: { _id: 1 } },
+    ]);
+
+    if (!resData.length) {
+      return SendResponse(res, "success", "data fetch successfully", []);
+    }
+
+    const userIds = resData.map((item) => item._id);
+
+    let userData = await UserModel.find(
+      {
+        userId: { $in: userIds },
+      },
+      {
+        username: 1,
+        name: 1,
+        userType: 1,
+      }
+    ).lean();
+
+    userData = convertKeyObject(userData, "_id");
+
+    const userTypes = [
+      "owner",
+      "subowner",
+      "superadmin",
+      "admin",
+      "subadmin",
+      "master",
+      "superagent",
+      "agent",
+      "client",
+    ];
+
+    const returnData = resData.map((element) => {
+    const user = userData[element._id];
+    if (!user) {
+        return element;
+    }
+      const parentUsernames = Object.fromEntries(
+        userTypes.map((type) => [
+          type,
+          user.parentData?.[`${type}userName`] ?? null,
+        ])
+      );
+
+      return {
+        ...element,
+        userData: {
+          username: user.username,
+          name: user.name,
+          userType: user.userType,
+        },
+      };
+    });
+
+
+
+
+    return SendResponse(
+      res,
+      "success",
+      downlineUserType,
+      returnData
+    );
+  } catch (error) {
+    console.error(error);
+    return SendResponse(
+      res,
+      "error",
+      "Something went wrong",
+      null
+    );
+  }
+};
+
+const sessionOddsBetCountsByMarketWise = async (req, res) => {
+  try {
+    const bodyData = req.body;
+    const loginData = req.loggedInUser;
+    const where = await whereHelper(loginData, {
+      isDeclare  : 0
+    });
+    const userType = bodyData.userType || loginData.userType;
+    const userId = new ObjectId(bodyData.userId || loginData.userId);
+    where[`${userType}Id`] = userId;
+
+    if (bodyData.marketId) {
+      where.marketId = bodyData.marketId
+    }
+
+    let [oddsBetList , tossBetList , sessionBetList  ] = await Promise.all([
+      oddsBetListModel.countDocuments({
+        ...where, ...{
+          oddsType: {
+            $ne: "toss",
+            }
+        }
+      }),
+      oddsBetListModel.countDocuments({
+        ...where, ...{
+          oddsType: {
+            $eq: "toss",
+            }
+      }}),
+      fancyBetListModel.countDocuments(where)
+    ])
+  
+    return SendResponse(
+      res,
+      "success",
+      "data fetch successfully",
+      {
+        tossBetList,
+        oddsBetList,
+        sessionBetList
+      }
+    );
+  } catch (error) {
+    console.error(error);
+    return SendResponse(
+      res,
+      "error",
+      "Something went wrong",
+      null
+    );
+  }
+};
+
+const halkaBhariAccountStatement = async (req, res) => {
+  try {
+    let bodyData = req.body;
+    const loginData = req.loggedInUser;
+    let where = await whereHelper(loginData);
+    let userType = loginData.userType
+    if (bodyData.creatorId) {
+      where = {}
+      where.creatorId = new ObjectId(bodyData.creatorId);
+    }
+    if (bodyData.userId) {
+      where = {}
+      where.userId = new ObjectId(bodyData.userId);
+    }
+    if (bodyData.transactionType) {
+      where.transactionType = bodyData.transactionType;
+    }
+
+    if (bodyData.showParent && bodyData.showParent == true) {
+      where.creatorId = { $ne: new ObjectId(bodyData.userId) }
+    }
+
+    if (bodyData.showChild && bodyData.showChild == true) {
+      where.creatorId = { $eq: new ObjectId(bodyData.creatorId) }
+      where.userId = { $eq: new ObjectId(bodyData.creatorId) }
+    }
+
+
+    if (bodyData.allTrue && bodyData.allTrue == true) {
+      where = {
+        [bodyData.userType + "Id"]: new ObjectId(bodyData.userId),
+        $or: [
+          { transactionType: "profitLoss" },
+          { transactionType: "depositWithdrawal" },
+          { transactionType: "ledger", creatorId: new ObjectId(bodyData.userId) },
+          { transactionType: "ledger", userId: new ObjectId(bodyData.userId) }
+        ]
+      };
+      if (bodyData.userType) {
+        userType = bodyData.userType
+      }
+    }
+
+    if (bodyData.isProfitLoss && bodyData.isProfitLoss == true) {
+      where = {
+        [bodyData.userType + "Id"]: new ObjectId(bodyData.userId),
+        transactionType: "profitLoss"
+      }
+    }
+
+ 
+
+    if (bodyData.isHistory && bodyData.isHistory == true) {
+      where = {
+        [bodyData.userType + "Id"]: new ObjectId(bodyData.userId),
+        $or: [
+          { transactionType: "profitLoss" },
+          { transactionType: "ledger", userId: new ObjectId(bodyData.userId) }
+        ]
+      };
+    }
+
+    
+      userType = bodyData.userType
+
+      if (bodyData.userType && bodyData.userType == "client") { 
+      where = {
+              clientId: new ObjectId(bodyData.userId),
+              $or: [
+                { transactionType: "depositWithdrawal", clientId: new ObjectId(bodyData.userId) },
+              ]
+          };
+
+
+      }
+    
+
+
+  
+
+    if (bodyData.marketId) {
+      where.marketId = bodyData.marketId
+    }
+
+    if (bodyData.marketType) {
+      where.marketType = bodyData.marketType
+    }
+
+    if (bodyData.selectionId) {
+      where.selectionId = bodyData.selectionId
+    }
+
+    if (bodyData.gameType) {
+      where.gameType = bodyData.gameType
+    }
+
+    if (bodyData.isComm && bodyData.isComm == 1) {
+      where.isComm = bodyData.isComm
+    }
+
+    if (bodyData.gameName) {
+      where.gameName = bodyData.gameName
+    }
+
+
+
+
+    let group = {
+      _id: {
+        remarks: `$remarks`,
+        marketId: `$marketId`,
+      },
+      userAmount: { $sum: `$${userType}ProfitLoss` },
+      amount: { $sum: `$amount` },
+      marketId: { $first: `$marketId` },
+      transactionType: { $first: `$transactionType` },
+      eventId: { $first: `$eventId` },
+      result: { $first: `$result` },
+      isComm: { $first: `$isComm` },
+      createdAt: { $first: `$createdAt` },
+      date: { $first: `$date` },
+      selectionId: { $first: `$selectionId` },
+      seriesId: { $first: `$seriesId` },
+      sportId: { $first: `$sportId` },
+      marketType: { $first: `$marketType` },
+      creatorId: { $first: `$creatorId` },
+      userId: { $first: `$userId` },
+      gameType: { $first: `$gameType` },
+      userType: { $first: `$userType` },
+    }
+
+
+    if (bodyData.userType && bodyData.userType == "client") {
+      group._id =  {
+        remarks: `$remarks`,
+        marketId: `$marketId`,
+        selectionId: `$selectionId`,
+      }
+      group.userAmount = { $sum: `$amount` }
+    }
+
+  
+  if (bodyData.isDepositWithdrawl && bodyData.isDepositWithdrawl == true) {
+    where = {
+      [`${bodyData.userType}Id`]: new ObjectId(bodyData.userId),
+      $or: [
+        {
+          transactionType: "depositWithdrawal",
+          userId : new ObjectId(bodyData.userId),
+        },
+      ]
+    };
+    group.userAmount = { $sum: `$amount` }
+  }
+    
+   if (bodyData.isLedger && bodyData.isLedger == true) {
+      where = {
+        transactionType: "ledger",
+        $or: [
+          { creatorId: new ObjectId(bodyData.userId) },
+          { userId: new ObjectId(bodyData.userId) }
+        ]
+      };
+     
+      group.userAmount = { $sum: `$amount` }
+   }
+    
+
+  if (bodyData.isCompanyLedger && bodyData.isCompanyLedger == true) {
+          where = {
+            [bodyData.userType + "Id"]: new ObjectId(bodyData.userId),
+            $or: [
+              { transactionType: "profitLoss" },
+              { transactionType: "ledger", userId: new ObjectId(bodyData.userId) }
+            ]
+          };
+        group.userAmount = { $sum: `$${userType}LedgerAmount` }
+  }
+    
+    
+  if (bodyData.isStatement && bodyData.isStatement == true) {
+     where = {
+            [bodyData.userType + "Id"]: new ObjectId(bodyData.userId),
+            $or: [
+              { transactionType: "profitLoss" },
+              { transactionType: "depositWithdrawal"}
+            ]
+     };
+    group.userAmount = { $sum: `$${userType}ProfitLoss` }
+    if (bodyData.userType == "client") {
+      group.userAmount = { $sum: `$amount` }
+    }  
+  }
+
+  
+   if (bodyData.userType && bodyData.userType == "client") {
+      group.userAmount = { $sum: `$amount` }
+  }
+
+    
+  if (bodyData.fromDate && bodyData.toDate) {
+      where.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+  }
+
+
+
+    _d(where , "ddd")
+    _d(group , "group")
+
+    let resData = await crickTransaction.aggregate([
+      {
+        $match: where,
+      },
+      {
+        $group: group,
+      },
+      {
+        $sort: { _id: 1 }
+      }
+    ]);
+
+
+    resData.map((data, key) => {
+
+
+
+      if ((bodyData.userType != "client" && data.transactionType == "profitLoss")) {
+        resData[key].userAmount = data.userAmount
+      }
+
+    })
+
+    return SendResponse(
+      res,
+      "success",
+      "get message details",
+      resData
+    );
+  } catch (e) {
+    console.log(`error in accountStatement In Crick` , e);
+  }
+};
+
 
 
 module.exports = {
@@ -1172,5 +1877,10 @@ module.exports = {
   getClientPositionByMarket,
   clientProfitLossByMarket,
   fancyScale,
-  matchScale
+  matchScale,
+  halkaBhariSettlement,
+  halkaBhariDiamondProfitLoss,
+  urbProfitLossReport,
+  sessionOddsBetCountsByMarketWise,
+  halkaBhariAccountStatement
 };

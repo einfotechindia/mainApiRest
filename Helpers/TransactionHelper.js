@@ -489,7 +489,6 @@ async function insertTransactionLogCasino(userData, logData, shareData) {
 
   try {
     const transaction = await TransactionLogModel.create(finalLogData);
-    _d(transaction , "transaction")
     return transaction._id;
   } catch (error) {
     console.log("insert Transaction Helper Error", error);
@@ -712,15 +711,16 @@ const updateCoinsTbl = async (userId, userType) => {
       );
     }
 
-     if (siteSetting.IS_SOCKET) { 
-          updateData = {
+     
+      updateData = {
             coins: userCoins.totalCoins,
             exposure: userCoins.exposure,
             profitLoss: userCoins.profitLoss,
             creditReference:  userCoins.creditReference ? userCoins.creditReference : 0,
-        }
+      }
+    
        emitToUser("coinUpdate" ,updateData ,  userId)
-     }
+     
 
   } catch (error) {
     console.log(

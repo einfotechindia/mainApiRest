@@ -115,8 +115,6 @@ router.post(
 router.post("/resetComm", verifyToken, decisionController.resetComm);
 router.post("/resetCommList", verifyToken, decisionController.resetCommList);
 
-
-
 router.post("/sessionDecisionByCenterpanel", decisionController.sessionDecision);
 
 

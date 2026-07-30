@@ -63,11 +63,22 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'"],
-      connectSrc: ["'self'"],
-      imgSrc: ["'self'", 'data:'],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      connectSrc: ["'self'", "wss:", "ws:"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
     }
-  }
+  },
+  // Prevent iframe embedding (anti-clickjacking)
+  frameguard: { action: 'deny' },
+  // Prevent MIME sniffing
+  noSniff: true,
+  // XSS filter
+  xssFilter: true,
+  // Hide X-Powered-By
+  hidePoweredBy: true,
+  // Referrer policy
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
 app.use(hpp());
 app.use(xss());
@@ -166,8 +177,12 @@ const intCasinoRoutes = require("./Routes/IntCasino.route");
 const inplayCasinoRoutes = require("./Routes/InplayCasino.route");
 const matchesHistoryRoutes = require("./Routes/MatchesHistory.route");
 const staffRoutes = require("./Routes/Staff/Staff.route");
+const subAgentRoutes = require("./Routes/SubAgent/SubAgent.route");
 const cloudflareRoutes = require("./Routes/Cloudflare/Cloudflare.route");
 const operatingRoutes = require("./Routes/Operating.route");
+const centerPanelRoutes = require("./Routes/CenterPanel/CenterPanel.route");
+const radheRoutes = require("./Routes/radhe.route");
+const fancyManagerRoutes = require("./Routes/FancyManager/FancyManager.route");
 
 app.use("/v1/user", UserRoutes);
 app.use("/v1/sports", BetRoutes);
@@ -193,8 +208,12 @@ app.use("/v1/intCasino", intCasinoRoutes);
 app.use("/v1/inplayCasino", inplayCasinoRoutes);
 app.use("/v1/matchesHistory", matchesHistoryRoutes);
 app.use("/v1/staff", staffRoutes);
+app.use("/v1/subagent", subAgentRoutes);
 app.use("/v1/cloudflare", cloudflareRoutes);
 app.use("/v1/operating", operatingRoutes);
+app.use("/v1/cp", centerPanelRoutes);
+app.use("/v1/radhe", radheRoutes);
+app.use("/v1/fancyManager", fancyManagerRoutes);
 
 
 

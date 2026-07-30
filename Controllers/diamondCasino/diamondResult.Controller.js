@@ -41,7 +41,7 @@ const {
   getShareChainData
 } = require("../../Helpers/UsersUtils");
 
-const { emitToUser } =  require("../../socket.js")
+const { emitToUser , emitToMultipleUsers} =  require("../../socket.js")
 
 const DiamondCasinoService = require("../../Services/DiamondCasino/DiamondCasino.service");
 axios.defaults.timeout = 1000;
@@ -487,6 +487,7 @@ const betsResultOfClient = async (req, res) => {
 
     let bulkWriteTransaction = [];
     let bulkWriteStatement = [];
+    let socketDecisionIdArray = []; 
 
 
     await Promise.all(
@@ -510,7 +511,20 @@ const betsResultOfClient = async (req, res) => {
 
         let creditAmount = await selectionResult(data);
 
-       // _d(creditAmount, "creditAmount")
+        let socketRemark =  `You ${creditAmount < 0 ? `Loss`:`won`} ${Math.abs(creditAmount)} for ${casinoType}-${data.playerName}`
+        let socketObj = {
+          type : "diamondCasino",
+          profitLoss: creditAmount,
+          remark: socketRemark,
+          betReload:true,
+          marketId : roundId
+        }
+
+        socketDecisionIdArray.push({
+          userId: data.clientId,
+          data : socketObj
+        })
+
 
         const pushTransaction = {
           betId: betId,
@@ -798,21 +812,13 @@ const betsResultOfClient = async (req, res) => {
       clientIdArray
     );
 
-    // if (siteSetting.IS_SOCKET) {
-    //   let userArray = [];
-    //   clientIdArray.map(async (userId) => {
-    //     userId = userId.toString();
-    //     let pushData = {
-    //       userId: userId,
-    //       data: {
-    //         fetch: true,
-    //       },
-    //     };
-    //     userArray.push(pushData);
-    //   });
-    // }
-
     await client.del(`redisBetsResultOfClient`);
+
+
+
+
+    emitToMultipleUsers(socketDecisionIdArray, "decisionResult")
+   
 
     if (res) {
       return SendResponse(
@@ -3332,9 +3338,7 @@ const saveAvaitorResults = async (req, res) => {
       req?.body?.roundIdArray?.length > 0
         ? req.body.roundIdArray
         : await client.smembers("avaitorRoundId");
-
-
-
+    
 
     if (bodyData.isDatabase) {
       let undeclaredRound = await casinoBetModel.aggregate([
@@ -3363,6 +3367,9 @@ const saveAvaitorResults = async (req, res) => {
           },
         },
       ]);
+      
+      //_d(undeclaredRound, "undeclaredRound")
+      
       let undeclaredRoundIdArray = [];
       undeclaredRound.map((data) => {
         undeclareAvaitorRoundId.push(data._id);
@@ -3370,7 +3377,7 @@ const saveAvaitorResults = async (req, res) => {
     }
 
 
-    //_d(undeclareAvaitorRoundId)
+    //_dx(undeclareAvaitorRoundId)
 
 
 
@@ -3409,20 +3416,6 @@ const saveAvaitorResults = async (req, res) => {
     const roundBetData = await casinoBetModel.find(
       {
         roundId: { $in: successRoundIds },
-      },
-      {
-        clientId: 1,
-        amount: 1,
-        roundId: 1,
-        eventId: 1,
-        userId: 1,
-        agentId: 1,
-        masterId: 1,
-        superagentId: 1,
-        subadminId: 1,
-        adminId: 1,
-        ownerId: 1,
-        superadminId: 1,
       }
     );
 
@@ -3430,48 +3423,56 @@ const saveAvaitorResults = async (req, res) => {
     const transactionLogs = [];
     const redisCleanupSet = new Set();
 
+    let betIdArray = []
+
     for (const bet of roundBetData) {
       const resultData = roundResultsMap[bet.roundId];
       if (!resultData || resultData.gameStatus !== "close") continue;
-
       const lossAmount = -Math.abs(bet.amount);
-
-
       const directShareData = await getShareChainData(bet.clientId);
 
-      const transaction = {
-        amount: lossAmount,
-        clientProfitLoss: lossAmount,
-        marketId: bet.roundId,
-        eventId: bet.eventId,
-        sportId: 1000000,
-        seriesId: bet.eventId,
-        gameName: "casino",
-        gameType: "avaitor",
-        marketType: "diamondCasino",
-        selectionId: bet.roundId,
-        remarks: `Avaitor-Vig-(${_date()})`,
-        userId: bet.clientId,
-        ownerId: bet.ownerId,
-        subownerId: bet.subownerId,
-        superadminId: bet.superadminId,
-        adminId: bet.adminId,
-        subadminId: bet.subadminId,
-        masterId: bet.masterId,
-        superagentId: bet.superagentId,
-        agentId: bet.agentId,
+      let crickInsertAmount = lossAmount
+      let casinoRemark = `Avaitor-Vig-(${_date()})`;
+      let crickPushTransactionLog = {
+                    amount: crickInsertAmount,
+                    clientProfitLoss: crickInsertAmount,
+                    marketId: bet?.roundId,
+                    eventId: `${bet.eventId}-${_date()}`,
+                    sportId: 1000000,
+                    seriesId: bet.eventId,
+                    gameName: "casino",
+                    betFor: "casino",
+                    transactionType: "profitLoss",
+                    gameType: "avaitor",
+                    marketType: "diamondCasino",
+                    selectionId: bet?.roundId,
+                    remarks: casinoRemark,
+                    userId: bet.userId,
+                    ownerId: bet.ownerId,
+                    subownerId: bet.subownerId,
+                    superadminId: bet.superadminId,
+                    adminId: bet.adminId,
+                    subadminId: bet.subadminId,
+                    masterId: bet.masterId,
+                    superagentId: bet.superagentId,
+                    agentId: bet.agentId,
+                    clientId: bet.userId,
+                    betId: bet._id,
+                    eventName : `AVAITOR-(${_date()})`,
       };
 
-      if (directShareData) {
-        for (const share of directShareData) {
-          transaction[`${share.creatorUserType}LedgerAmount`] =
-            (share[`${share.creatorUserType}LedgerCasinoShare`] * lossAmount) / 100;
-          transaction[`${share.creatorUserType}ProfitLoss`] =
-            (share[`${share.creatorUserType}ProfitLossrCasinoShare`] * lossAmount) / 100;
-        }
-      }
+      betIdArray.push(bet._id)
 
-      transactionLogs.push(transaction);
+      if (directShareData) {
+        directShareData && directShareData.map((directShare) => { 
+                      crickPushTransactionLog[`${directShare.creatorUserType}LedgerAmount`] = directShare[`${directShare.creatorUserType}LedgerCasinoShare`] * crickInsertAmount/100
+                      crickPushTransactionLog[`${directShare.creatorUserType}ProfitLoss`] = directShare[`${directShare.creatorUserType}ProfitLossrCasinoShare`] * crickInsertAmount/100
+        })
+      }
+      
+      
+      transactionLogs.push(crickPushTransactionLog);
+      
 
       bulkUpdates.push({
         updateMany: {
@@ -3490,13 +3491,17 @@ const saveAvaitorResults = async (req, res) => {
       redisCleanupSet.add(bet.roundId);
     }
 
+   //_dx(betIdArray)
 
+    await crickTransactionLog.deleteMany({ betId : {$in : betIdArray}})
     /* ---------------- EXECUTE DB OPS IN PARALLEL ---------------- */
-    await Promise.allSettled([
+  let [crickInsert] =   await Promise.allSettled([
       transactionLogs.length && crickTransactionLog.insertMany(transactionLogs),
       bulkUpdates.length && casinoBetModel.bulkWrite(bulkUpdates, { ordered: false }),
       client.srem("avaitorRoundId", ...Array.from(redisCleanupSet)),
-    ]);
+
+  ]);
+    
 
     return res
       ? SendResponse(res, "success", "Result saved successfully")
@@ -3509,395 +3514,6 @@ const saveAvaitorResults = async (req, res) => {
   }
 };
 
-
-
-// const saveAvaitorResults = async (req, res) => {
-//   try {
-//     let bodyData = req?.body || {};
-
-//     let undeclareAvaitorRoundId =
-//       bodyData?.roundIdArray?.length > 0
-//         ? bodyData.roundIdArray
-//         : await client.smembers("avaitorRoundId");
-
-//     /* ---------------- DATABASE FALLBACK ---------------- */
-//     if (bodyData.isDatabase) {
-//       let undeclaredRound = await casinoBetModel.aggregate([
-//         {
-//           $match: {
-//             isDeclare: 0,
-//             isPartiallyDeclare: 0,
-//             isDeleted: false,
-//             eventId: 303031,
-//           },
-//         },
-//         { $group: { _id: "$roundId" } },
-//         { $sort: { _id: 1 } },
-//       ]);
-
-//       undeclaredRound.forEach((data) => {
-//         undeclareAvaitorRoundId.push(data._id);
-//       });
-//     }
-
-//     if (!undeclareAvaitorRoundId?.length) {
-//       return res
-//         ? SendResponse(res, "success", "No undeclared round IDs")
-//         : [];
-//     }
-
-//     const hitUrl = process.env.AVAITOR_RESULT_URL;
-//     if (!hitUrl) {
-//       return res
-//         ? SendResponse(res, "error", "Cache URL not found")
-//         : [];
-//     }
-
-//     /* ---------------- CHUNK FUNCTION ---------------- */
-//     const chunkArray = (arr, size) => {
-//       const result = [];
-//       for (let i = 0; i < arr.length; i += size) {
-//         result.push(arr.slice(i, i + size));
-//       }
-//       return result;
-//     };
-
-//     const chunks = chunkArray(undeclareAvaitorRoundId, 20);
-
-//     const roundResultsMap = {};
-//     const successRoundIds = [];
-
-//     /* ---------------- FETCH RESULTS (CHUNKED) ---------------- */
-//     for (const chunk of chunks) {
-//       const apiResults = await Promise.allSettled(
-//         chunk.map((roundId) => axios.post(hitUrl, { roundId }))
-//       );
-
-//       for (let i = 0; i < apiResults.length; i++) {
-//         const resObj = apiResults[i];
-
-//         if (resObj.status === "fulfilled" && resObj.value?.data?.data?.data) {
-//           const data = resObj.value.data.data.data;
-//           roundResultsMap[data.roundId] = data;
-//           successRoundIds.push(data.roundId);
-//         }
-//       }
-
-//       // optional small delay (prevents rate limit / spikes)
-//       // await new Promise((r) => setTimeout(r, 100));
-//     }
-
-//     if (!successRoundIds.length) {
-//       return res
-//         ? SendResponse(res, "success", "No valid results received")
-//         : [];
-//     }
-
-//     /* ---------------- FETCH BET DATA ---------------- */
-//     const roundBetData = await casinoBetModel.find(
-//       {
-//         roundId: { $in: successRoundIds },
-//         isDeclare: 0,
-//       },
-//       {
-//         clientId: 1,
-//         amount: 1,
-//         roundId: 1,
-//         eventId: 1,
-//         userId: 1,
-//         agentId: 1,
-//         masterId: 1,
-//         superagentId: 1,
-//         subadminId: 1,
-//         adminId: 1,
-//         ownerId: 1,
-//       }
-//     );
-
-//     const bulkUpdates = [];
-//     const transactionLogs = [];
-//     const redisCleanupSet = new Set();
-
-//     /* ---------------- PROCESS BETS ---------------- */
-//     for (const bet of roundBetData) {
-//       const resultData = roundResultsMap[bet.roundId];
-//       if (!resultData || resultData.gameStatus !== "close") continue;
-
-//       const lossAmount = -Math.abs(bet.amount);
-//       const directShareData = await getShareChainData(bet.clientId);
-
-//       const transaction = {
-//         amount: lossAmount,
-//         clientProfitLoss: lossAmount,
-//         marketId: bet.roundId,
-//         eventId: bet.eventId,
-//         sportId: 1000000,
-//         seriesId: bet.eventId,
-//         gameName: "casino",
-//         gameType: "avaitor",
-//         marketType: "diamondCasino",
-//         selectionId: bet.roundId,
-//         remarks: `Avaitor-Vig-(${_date()})`,
-//         userId: bet.clientId,
-//         ownerId: bet.ownerId,
-//         subownerId: bet.subownerId,
-//         superadminId: bet.superadminId,
-//         adminId: bet.adminId,
-//         subadminId: bet.subadminId,
-//         masterId: bet.masterId,
-//         superagentId: bet.superagentId,
-//         agentId: bet.agentId,
-//       };
-
-//       if (directShareData) {
-//         for (const share of directShareData) {
-//           transaction[`${share.creatorUserType}LedgerAmount`] =
-//             (share[`${share.creatorUserType}LedgerCasinoShare`] *
-//               lossAmount) /
-//             100;
-
-//           transaction[`${share.creatorUserType}ProfitLoss`] =
-//             (share[`${share.creatorUserType}ProfitLossrCasinoShare`] *
-//               lossAmount) /
-//             100;
-//         }
-//       }
-
-//       transactionLogs.push(transaction);
-
-//       bulkUpdates.push({
-//         updateMany: {
-//           filter: { roundId: bet.roundId, isDeclare: 0 },
-//           update: {
-//             $set: {
-//               isDeclare: 1,
-//               isPartiallyDeclare: 1,
-//               profit: 0,
-//               result: String(resultData.curentMultiplier),
-//               showResult: String(resultData.curentMultiplier),
-//             },
-//           },
-//         },
-//       });
-
-//       redisCleanupSet.add(bet.roundId);
-//     }
-
-//     /* ---------------- EXECUTE DB OPS ---------------- */
-//     await Promise.allSettled([
-//       transactionLogs.length &&
-//         crickTransactionLog.insertMany(transactionLogs),
-//       bulkUpdates.length &&
-//         casinoBetModel.bulkWrite(bulkUpdates, { ordered: false }),
-//       redisCleanupSet.size &&
-//         client.srem("avaitorRoundId", ...Array.from(redisCleanupSet)),
-//     ]);
-
-//     return res
-//       ? SendResponse(res, "success", "Result saved successfully")
-//       : successRoundIds;
-//   } catch (error) {
-//     _d("❌ saveAvaitorResults error:", error);
-//     if (res) return SendResponse(res, "error", "Internal server error");
-//     throw error;
-//   }
-// };
-
-
-
-// const saveAvaitorResults = async (req, res) => {
-//   try {
-//     let bodyData = req?.body || {};
-
-//     let undeclareAvaitorRoundId =
-//       bodyData?.roundIdArray?.length > 0
-//         ? bodyData.roundIdArray
-//         : await client.smembers("avaitorRoundId");
-
-//     /* -------- DATABASE FALLBACK -------- */
-//     if (bodyData.isDatabase) {
-//       const undeclaredRound = await casinoBetModel.aggregate([
-//         {
-//           $match: {
-//             isDeclare: 0,
-//             isPartiallyDeclare: 0,
-//             isDeleted: false,
-//             eventId: 303031,
-//           },
-//         },
-//         { $group: { _id: "$roundId" } },
-//       ]);
-
-
-//       //_d(undeclaredRound , "undeclaredRound")
-
-//       undeclaredRound.forEach((d) =>
-//         undeclareAvaitorRoundId.push(d._id)
-//       );
-//     }
-
-//     if (!undeclareAvaitorRoundId?.length) {
-//       return res
-//         ? SendResponse(res, "success", "No undeclared round IDs")
-//         : [];
-//     }
-
-//     const hitUrl = process.env.AVAITOR_RESULT_URL;
-//     if (!hitUrl) {
-//       return res
-//         ? SendResponse(res, "error", "Cache URL not found")
-//         : [];
-//     }
-
-//     /* -------- CHUNK HELPER -------- */
-//     const chunkSize = 20;
-
-//     const successRoundIds = [];
-
-//     /* -------- PROCESS IN CHUNKS -------- */
-//     for (let i = 0; i < undeclareAvaitorRoundId.length; i += chunkSize) {
-//       const chunk = undeclareAvaitorRoundId.slice(i, i + chunkSize);
-
-//       /* ---- STEP 1: FETCH API ---- */
-//       const apiResults = await Promise.allSettled(
-//         chunk.map((roundId) => axios.post(hitUrl, { roundId }))
-//       );
-
-//       const roundResultsMap = {};
-//       const validRoundIds = [];
-
-//       for (const resObj of apiResults) {
-//         if (resObj.status === "fulfilled" && resObj.value?.data?.data?.data) {
-//           const data = resObj.value.data.data.data;
-
-//           if (data.gameStatus === "close") {
-//             roundResultsMap[data.roundId] = data;
-//             validRoundIds.push(data.roundId);
-//           }
-//         }
-//       }
-
-//       if (!validRoundIds.length) continue;
-
-//       successRoundIds.push(...validRoundIds);
-
-//       /* ---- STEP 2: FETCH BETS (ONLY FOR THIS CHUNK) ---- */
-//       const roundBetData = await casinoBetModel.find(
-//         {
-//           roundId: { $in: validRoundIds },
-//           isDeclare: 0,
-//         },
-//         {
-//           clientId: 1,
-//           amount: 1,
-//           roundId: 1,
-//           eventId: 1,
-//           agentId: 1,
-//           masterId: 1,
-//           superagentId: 1,
-//           subadminId: 1,
-//           adminId: 1,
-//           ownerId: 1,
-//         }
-//       );
-
-//       const bulkUpdates = [];
-//       const transactionLogs = [];
-//       const redisCleanup = new Set();
-
-//       /* ---- STEP 3: PROCESS BETS ---- */
-//       for (const bet of roundBetData) {
-//         const resultData = roundResultsMap[bet.roundId];
-//         if (!resultData) continue;
-
-//         const lossAmount = -Math.abs(bet.amount);
-
-//         const directShareData = await getShareChainData(bet.clientId);
-
-//         const transaction = {
-//           amount: lossAmount,
-//           clientProfitLoss: lossAmount,
-//           marketId: bet.roundId,
-//           eventId: bet.eventId,
-//           sportId: 1000000,
-//           seriesId: bet.eventId,
-//           gameName: "casino",
-//           gameType: "avaitor",
-//           marketType: "diamondCasino",
-//           selectionId: bet.roundId,
-//           remarks: `Avaitor-Vig-(${_date()})`,
-//           userId: bet.clientId,
-//           ownerId: bet.ownerId,
-//           subownerId: bet.subownerId,
-//           superadminId: bet.superadminId,
-//           adminId: bet.adminId,
-//           subadminId: bet.subadminId,
-//           masterId: bet.masterId,
-//           superagentId: bet.superagentId,
-//           agentId: bet.agentId,
-//         };
-
-//         if (directShareData) {
-//           for (const share of directShareData) {
-//             transaction[`${share.creatorUserType}LedgerAmount`] =
-//               (share[`${share.creatorUserType}LedgerCasinoShare`] *
-//                 lossAmount) /
-//               100;
-
-//             transaction[`${share.creatorUserType}ProfitLoss`] =
-//               (share[`${share.creatorUserType}ProfitLossrCasinoShare`] *
-//                 lossAmount) /
-//               100;
-//           }
-//         }
-
-//         transactionLogs.push(transaction);
-
-//         bulkUpdates.push({
-//           updateMany: {
-//             filter: { roundId: bet.roundId, isDeclare: 0 },
-//             update: {
-//               $set: {
-//                 isDeclare: 1,
-//                 isPartiallyDeclare: 1,
-//                 profit: 0,
-//                 result: String(resultData.curentMultiplier),
-//                 showResult: String(resultData.curentMultiplier),
-//               },
-//             },
-//           },
-//         });
-
-//         redisCleanup.add(bet.roundId);
-//       }
-
-//       /* ---- STEP 4: EXECUTE PER-CHUNK DB OPS ---- */
-//       await Promise.allSettled([
-//         transactionLogs.length &&
-//           crickTransactionLog.insertMany(transactionLogs),
-//         bulkUpdates.length &&
-//           casinoBetModel.bulkWrite(bulkUpdates, { ordered: false }),
-//         redisCleanup.size &&
-//           client.srem("avaitorRoundId", ...Array.from(redisCleanup)),
-//       ]);
-
-
-//       console.log("doneee" , i)
-
-//       /* ---- OPTIONAL THROTTLE ---- */
-//       // await new Promise(r => setTimeout(r, 100));
-//     }
-
-//     return res
-//       ? SendResponse(res, "success", "Chunk processing completed")
-//       : successRoundIds;
-
-//   } catch (error) {
-//     _d("❌ saveAvaitorResults error:", error);
-//     if (res) return SendResponse(res, "error", "Internal server error");
-//     throw error;
-//   }
-// };
 const saveCasinoLedgerByDateByCrickTransaction = async (req, res) => {
   try {
 
@@ -3916,74 +3532,6 @@ const saveCasinoLedgerByDateByCrickTransaction = async (req, res) => {
     _d(error, "error in generateDiamondCasinoListByDate ");
   }
 };
-
-
-// const saveResultRedisVirtual = async (req, res) => {
-//   try {
-//     const undeclaredRoundIdArray = await client.smembers(
-//       `virtualUndeclaredRoundId`
-//     );
-
-//     if (!undeclaredRoundIdArray || undeclaredRoundIdArray.length === 0) {
-//       return SendResponse(
-//         res,
-//         "success",
-//         "No undeclared roundIds found"
-//       );
-//     }
-
-//     const resultUrl = casinoFetchUrl.virtualCasinoResult;
-
-//     const promises = undeclaredRoundIdArray.map(async (roundId) => {
-//       try {
-//         const resultData = await axios.post(resultUrl, { roundId: roundId });
-//         if (!resultData?.data?.data) {
-//           throw new Error(`Invalid response for roundId: ${roundId}`);
-//         }
-
-//         const result = resultData.data.data;
-//         if (result.result) {
-//           await saveVirtualCasinoResult(
-//             roundId,
-//             result
-//           );
-//           return { roundId, status: "fulfilled" };
-//         }
-//         return { roundId, status: "partiallyResulted" };
-//       } catch (err) {
-//         _d(`Error in roundId ${roundId}`, err.message);
-//         return { roundId, status: "rejected", error: err.message };
-//       }
-//     });
-//     const results = await Promise.allSettled(promises);
-//     const success = results.filter(r => r.status === "fulfilled").length;
-//     const failed = results.filter(r => r.status === "rejected").length;
-//     // _d(`Total: ${results.length}, Success: ${success}, Failed: ${failed}`);
-
-
-//     return res ? SendResponse(
-//       res,
-//       "success",
-//       "Result processing completed",
-//       {
-//         total: results.length,
-//         success,
-//         failed
-//       }
-//     ) : null;
-
-//   } catch (error) {
-//     _d("Outer Error:", error);
-//     return res ? SendResponse(
-//       res,
-//       "error",
-//       "Something went wrong",
-//       error.message
-//     ) : null;
-//   }
-// };
-
-
 
 const saveVirtualCasinoResult = async (roundId, result) => {
   try {
@@ -4020,7 +3568,6 @@ const saveVirtualCasinoResult = async (roundId, result) => {
     console.log(err, "Error in saveVirtualCasinoResult:");
   }
 };
-
 
 const newGenerateDiamondLedger = async (req, res) => {
   try {
@@ -4658,9 +4205,6 @@ const newGenerateDiamondLedger = async (req, res) => {
     console.log(error);
   }
 };
-
-
-
 
 const saveResultRedisVirtual = async (req, res) => {
   try {

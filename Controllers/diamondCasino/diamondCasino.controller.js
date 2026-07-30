@@ -2807,19 +2807,44 @@ const getPlusMinusCasinoDetail = async (req, res) => {
 };
 
 const updateCasinoVideo = async (req, res) => {
-  let casinoListData = await diamondCasinoList.find();
-  casinoListData.map(async (list) => {
-    list.videoUrl2 = list.videoUrl1;
-     list.videoUrl1 = `https://casinostream.tresting.com/route/?id=${list.eventId}`;
-     list.videoUrl2 = `https://live.oldd247.com/swiftdizire/?id=${list.eventId}`;
-     list.socketURL = `https://casinoapi.tresting.com`;
-     list.cacheURL = `https://casinoapi.tresting.com/v2/api/casinoData?casinoType=${list.shortName}`;
-    await DiamondCasinoService.updateDiamondCasino(list);
-  });
+  try {
+    const casinoListData = await diamondCasinoList.find({isVirtual : false}).lean();
+    if (!casinoListData.length) {
+      return SendResponse(res, "success", "No casino data found.");
+    }
+    const updateData = casinoListData.map((list) => ({
+      ...list,
+      videoUrl1: `https://casinostream.tresting.com/route/?id=${list.eventId}`,
+      videoUrl2: `https://live.oldd247.com/swiftdizire/?id=${list.eventId}`,
+      socketURL: "https://casinoapi.tresting.com",
+      cacheURL: `https://casinoapi.tresting.com/v2/api/casinoData?casinoType=${list.shortName}`,
+      priority: 1,
+    }));
 
-  return SendResponse(res, "success", "link updated successgully");
+    // Delete Redis cache in parallel
+    await Promise.allSettled(
+      updateData.map((item) =>
+        client.del(`diamondCasinoList_${item.eventId}`)
+      )
+    );
+
+    // Replace non-virtual records
+    await diamondCasinoList.deleteMany({ isVirtual: false });
+
+    // Insert all data
+    await diamondCasinoList.insertMany(updateData, {
+      ordered: false,
+    });
+
+    // Delete list cache
+    await client.del("diamondCasinoList");
+
+    return SendResponse(res, "success", "Link updated successfully.");
+  } catch (error) {
+    console.error("updateCasinoVideo Error:", error);
+    return ErrorResponse(res, error.message || "Something went wrong.");
+  }
 };
-
 const redeclareRoundId = async (req, res) => {
   let bodyData = req.body
   if(!bodyData.roundId){
@@ -3288,11 +3313,6 @@ const avaitorCashOut = async (req, res) => {
 
   
     let updatedCoins = await updateCoinsTbl(clientId, "client");
-    
-
-
-
-
           updatedCoins.finalProfit = profit;
           updatedCoins.curentMultiplier = multiplier;
 

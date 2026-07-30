@@ -115,9 +115,6 @@ const oddBetPlaced = async (req, res) => {
     }
 
     const checkOdds = await BetService.checkLiveMatchOdds(bodyData, userRate);
-
-    
-
     if (checkOdds.status == "error") {
       return SendResponse(res, "error", checkOdds.message);
     }
@@ -135,13 +132,10 @@ const oddBetPlaced = async (req, res) => {
     let betfairMarketList = checkOdds.data.betfairMarketList ? checkOdds.data.betfairMarketList : []
     
     let checkUserData = await BetService.checkUserData(userId, bodyData);
-
     if (checkUserData.status == "error") {
       return SendResponse(res, "error", checkUserData.message);
     }
-
     const userData = checkUserData.data;
-
     if (!userData.betStatus) {
       return SendResponse(
         res,
@@ -149,6 +143,9 @@ const oddBetPlaced = async (req, res) => {
         "your bet is locked please contact your agent"
       );
     }
+
+
+    
 
     let oldMatchBet = {};
     let checkPlayData = {};
@@ -587,7 +584,8 @@ const [insertBetData, marketCoins, BetServicesData ,oddsPositionResult] = await 
     }
 
 
-  try {
+    try {
+    
       if (directUserShareData) {
         await Promise.allSettled(
           directUserShareData.map((data) =>
@@ -1164,7 +1162,7 @@ const betsList = async (req, res) => {
       where.amount = { $gt: bodyData.minAmt, $lt: bodyData.maxAmt };
     }
 
-    if (bodyData.sportId) where.sportId = bodyData.sportId;
+    if (bodyData.sportsId) where.sportsId = bodyData.sportsId;
 
     if (bodyData.ip ) {
       where.ip = bodyData.ip;
@@ -2315,11 +2313,10 @@ const insertBetfairMarket = async (req, res) => {
 
 const marketReload = async (req, res) => {
   const bodyData = req.body;
-  if (siteSetting.IS_SOCKET) {
     emitToAllActiveUsers("marketReload", {
       marketId : bodyData.marketId,
     })
-  }
+  
   return SendResponse(res, "success", "market reload Successfully");
 };
 

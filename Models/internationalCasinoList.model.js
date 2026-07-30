@@ -58,6 +58,7 @@ const InternationalCasinoListSchema = new mongoose.Schema(
     urlThumb: {
       type: String,
     },
+    coinsSetting: {},
   },
   {
     timestamps: true,

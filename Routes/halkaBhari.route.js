@@ -61,5 +61,38 @@ router.post(
 );
 
 
+router.post(
+  "/halkaBhariSettlement",
+  verifyToken,
+  halkaBhariService.halkaBhariSettlement
+);
+
+
+router.post(
+  "/halkaBhariDiamondProfitLoss",
+  verifyToken,
+  halkaBhariService.halkaBhariDiamondProfitLoss
+);
+
+
+
+router.post(
+  "/urbProfitLossReport",
+  verifyToken,
+  halkaBhariService.urbProfitLossReport
+);
+
+router.post(
+  "/sessionOddsBetCountsByMarketWise",
+  verifyToken,
+  halkaBhariService.sessionOddsBetCountsByMarketWise
+);
+
+router.post(
+  "/halkaBhariAccountStatement",
+  verifyToken,
+  halkaBhariService.halkaBhariAccountStatement
+);
+
 
 module.exports = router;

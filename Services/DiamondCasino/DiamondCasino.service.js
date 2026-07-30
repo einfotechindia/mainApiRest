@@ -53,7 +53,6 @@ const getDiamondCasinoByEventId = async (eventId) => {
 
 const updateDiamondCasino = async (bodyData) => {
   const eventId = bodyData.eventId;
-
     const result = await diamondCasinoList.updateOne(
       { eventId: eventId },      // filter
       { $set: bodyData },        // update data

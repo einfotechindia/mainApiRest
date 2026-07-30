@@ -72,6 +72,24 @@ const StaffSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // Password management
+    isPasswordChanged: {
+      type: Boolean,
+      default: false, // false = must change on first login
+    },
+    passwordChangedAt: {
+      type: Date,
+      default: null,
+    },
+    // 2FA (Google Authenticator)
+    twoFactorEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    twoFactorSecret: {
+      type: String,
+      default: null,
+    },
   },
   {
     timestamps: true,

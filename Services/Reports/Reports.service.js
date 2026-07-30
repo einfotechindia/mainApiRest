@@ -2527,7 +2527,6 @@ const bsfProfitLoss = async (req, res) => {
   try {
     const { body, loggedInUser } = req;
     let userType = loggedInUser.userType;
-
     const userWhere = await whereHelper(loggedInUser, {
       transactionType: "profitLoss",
     });
@@ -2543,12 +2542,22 @@ const bsfProfitLoss = async (req, res) => {
       userType = body.downlineUserType
     }
 
+
     // User Filter
     if (body.userId && body.userType) {
       userWhere[`${body.userType}Id`] = new ObjectId(body.userId);
       userType = body.userType
     }
 
+    if (body.isMatchProfitLoss && body.isMatchProfitLoss == true) {
+       userWhere.gameName = "sports"
+    }
+
+     if (body.iscasinoProfitLoss && body.iscasinoProfitLoss == true) {
+       userWhere.gameName = "casino"
+    }
+
+    
 
     const profitLossPipeline = [
       {

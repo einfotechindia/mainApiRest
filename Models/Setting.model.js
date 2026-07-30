@@ -150,6 +150,22 @@ const SettingSchema = new mongoose.Schema(
       type: Number,
       default: 5,
     },
+    footballBetDelay: {
+      type: Number,
+      default: 0,
+    },
+    tennisBetDelay: {
+      type: Number,
+      default: 0,
+    },
+    horseBetDelay: {
+      type: Number,
+      default: 0,
+    },
+    greyBetDelay: {
+      type: Number,
+      default: 0,
+    },
     diamondCasioPerBet: {
       type: Boolean,
       default: false,

@@ -238,6 +238,7 @@ const userListNew = async (req, res) => {
         userMatkaCommission: 1,
         userBetfairCommission: 1,
         userId: 1,
+        creatorId: 1,
         allowedDomains: 1,
     }
     
@@ -1760,12 +1761,7 @@ const diamondAccountStatement = async (req, res) => {
 
     }
     
-    
-    
-    
-    _d(where , "where")
-
-
+  
     let group = {
       _id: {
         remarks: `$remarks`,
@@ -1781,6 +1777,7 @@ const diamondAccountStatement = async (req, res) => {
       createdAt: { $first: `$createdAt` },
       date: { $first: `$date` },
       selectionId: { $first: `$selectionId` },
+      transactionId: { $first: `$transactionId` },
       seriesId: { $first: `$seriesId` },
       sportId: { $first: `$sportId` },
       marketType: { $first: `$marketType` },

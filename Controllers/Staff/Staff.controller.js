@@ -86,4 +86,75 @@ module.exports = {
       return SendResponse(res, "error", err.message || "Something went wrong");
     }
   },
+  AddAvailablePage: async (req, res) => {
+    try {
+      await StaffService.AddAvailablePage(req, res);
+    } catch (err) {
+      return SendResponse(res, "error", err.message || "Something went wrong");
+    }
+  },
+  UpdateAvailablePage: async (req, res) => {
+    try {
+      await StaffService.UpdateAvailablePage(req, res);
+    } catch (err) {
+      return SendResponse(res, "error", err.message || "Something went wrong");
+    }
+  },
+  DeleteAvailablePage: async (req, res) => {
+    try {
+      await StaffService.DeleteAvailablePage(req, res);
+    } catch (err) {
+      return SendResponse(res, "error", err.message || "Something went wrong");
+    }
+  },
+
+  // Staff Activity
+  StaffActivityList: async (req, res) => {
+    try {
+      await StaffService.StaffActivityList(req, res);
+    } catch (err) {
+      return SendResponse(res, "error", err.message || "Something went wrong");
+    }
+  },
+  StaffActivityStats: async (req, res) => {
+    try {
+      await StaffService.StaffActivityStats(req, res);
+    } catch (err) {
+      return SendResponse(res, "error", err.message || "Something went wrong");
+    }
+  },
+
+  // Force Logout & Online Staff
+  ForceLogoutStaff: async (req, res) => {
+    try {
+      await StaffService.ForceLogoutStaff(req, res);
+    } catch (err) {
+      return SendResponse(res, "error", err.message || "Something went wrong");
+    }
+  },
+  GetOnlineStaff: async (req, res) => {
+    try {
+      await StaffService.GetOnlineStaff(req, res);
+    } catch (err) {
+      return SendResponse(res, "error", err.message || "Something went wrong");
+    }
+  },
+
+  // 2FA
+  Setup2FA: async (req, res) => {
+    try { await StaffService.Setup2FA(req, res); }
+    catch (err) { return SendResponse(res, "error", err.message || "Something went wrong"); }
+  },
+  Verify2FA: async (req, res) => {
+    try { await StaffService.Verify2FA(req, res); }
+    catch (err) { return SendResponse(res, "error", err.message || "Something went wrong"); }
+  },
+  Disable2FA: async (req, res) => {
+    try { await StaffService.Disable2FA(req, res); }
+    catch (err) { return SendResponse(res, "error", err.message || "Something went wrong"); }
+  },
+  StaffChangePassword: async (req, res) => {
+    try { await StaffService.StaffChangePassword(req, res); }
+    catch (err) { return SendResponse(res, "error", err.message || "Something went wrong"); }
+  },
 };

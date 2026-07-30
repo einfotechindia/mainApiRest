@@ -28,8 +28,6 @@ const {
   getBetfairMarketDataByRedis,
   getRacingDataByRedis,
 } = require("../../Helpers/RedisHelper");
-
-
 const { getUserCoinsByTransactionTable } = require("../../Helpers/TransactionHelper")
 
 const {
@@ -48,6 +46,9 @@ const {
 } = require("../../Helpers/CommonHelper");
 const { json } = require("body-parser");
 const { TRUE } = require("../../utils/constants");
+const { emitToUser , emitToAllActiveUsers } =  require("../../socket.js")
+
+
 
 
 const calculateCombinedOdds = (type = 'back') => {
@@ -1668,45 +1669,6 @@ const insertOddsPosition = async (marketId, clientId, insertData) => {
   return true;
 };
 
-// const getSessionList = async (userWhere) => {
-//   try {
-//     var res = await FancyBetModel.aggregate([
-//       {
-//         $match: userWhere,
-//       },
-//       {
-//         $group: {
-//           _id: "$selectionId",
-//           sessionNames: { $addToSet: "$sessionName" },
-//           isDeclare: { $first: "$isDeclare" },
-//           decisionRun: { $first: "$decisionRun" },
-//           fancyType: { $first: "$fancyType" },
-//           gtype: { $first: "$gtype" },
-//           totalClientBetAmount: { $sum: "$amount" },
-//           totalSessionBets: { $sum: 1 },
-//         },
-//       },
-//       {
-//         $project: {
-//           _id: 0,
-//           selectionId: "$_id",
-//           sessionNames: 1,
-//           totalClientBetAmount: 1,
-//           totalSessionBets: 1,
-//           decisionRun: 1,
-//           isDeclare: 1,
-//           fancyType: 1,
-//           gtype: 1,
-//         },
-//       },
-//     ]);
-//     return res;
-//   } catch (error) {
-//     console.log("Session List Fetching Error", error);
-//     return error;
-//   }
-// };
-
 
 const getSessionList = async (userWhere = {}) => {
   try {
@@ -1942,6 +1904,10 @@ const setSportsInRedis = async (returnData) => {
         await client.expire(`${data.marketId}_data`, 60 * 60 * 24);
       });
     }
+    
+    emitToAllActiveUsers("updateMatchList", {
+          reload :true
+    })
 
     return returnData;
   } catch (error) {
@@ -2091,7 +2057,6 @@ const saveSportsListByNewCenterPanel = async () => {
 
     await Promise.all([
       setSportsInRedis(),
-
     ])
 
     return true

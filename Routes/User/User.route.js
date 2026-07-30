@@ -3,17 +3,16 @@ const {
   verifyToken,
   verifyCasinoToken,
   convertDecruptToEncrupt,
+  isOwnerAndStaff,
 } = require("../../Middlewares/VerifyToken");
 const router = express.Router();
 const UserController = require("../../Controllers/User/User.controller");
 
 router.post("/login", UserController.Login);
 router.post("/UserLoginCheck", UserController.UserLoginCheck);
-router.post("/userLogout", UserController.userLogout);
 
+router.post("/userLogout",verifyToken,UserController.userLogout);
 router.post("/create", verifyToken, UserController.Create);
-
-
 router.post("/userDetails", verifyToken, UserController.Details);
 router.post("/userBalance", verifyToken, UserController.userBalance);
 router.post("/userList", verifyToken, UserController.userList);
@@ -29,6 +28,7 @@ router.post("/userActivity", verifyToken, UserController.userActivity);
 router.post(
   "/userLoginActivity",
   verifyToken,
+  isOwnerAndStaff,
   UserController.userLoginActivity
 );
 router.post("/userLedger", verifyToken, UserController.userLedger);

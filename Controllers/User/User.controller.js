@@ -25,11 +25,11 @@ const {
   onlyOwerPermit,
   whereHelper,
   casinoShareArray,
-  throughSocketDataByAxios,
   _date,
   convertKeyObjectAndSeperateid,
   getInternationalGameData,
   getSettingData,
+  getWebsiteDataByReq
 } = require("../../Helpers/CommonHelper");
 const { siteSetting, fetchUrl } = require("../../Common/Constants");
 // const moment = require("moment");
@@ -65,18 +65,11 @@ module.exports = {
       }
     );
     await client.del(userId + "");
+
+
     if (siteSetting.IS_SOCKET) {
-      let userArray = [
-        {
-          userId: userId + "",
-          data: {
-            isLogout: true,
-            userId: userId + "",
-            authenticateToken: "",
-          },
-        },
-      ];
-      await throughSocketDataByAxios(userArray, "userLoggedOut");
+      const { emitToUser } = require("../../socket");
+      await emitToUser("userLoggedOut", { isLogout: true, userId: userId + "" }, userId);
     }
 
     return SendResponse(res, "success", "successfully Logout");
@@ -260,8 +253,7 @@ module.exports = {
         );
       }
 
-
-      let [casinoData, user] = await Promise.all([
+      let [casinoData, user, domainSetting] = await Promise.all([
         getInternationalGameData(bodyData.gameId),
         UserService.userDetailsByUserId(userData.userId, {
           coins: 1,
@@ -270,8 +262,12 @@ module.exports = {
           intCasinoStatus: 1,
           intCasinoMultiply: 1,
           subownerId: 1,
-        })
+        }),
+        getWebsiteDataByReq(req, true)
       ])
+
+      let domainData = domainSetting?.domainData || {};
+      let operatorId = domainData.operatorId && domainData.operatorId != null ? domainData.operatorId : process.env.OPERATOR_ID;
 
       if (!casinoData) {
         return SendResponse(
@@ -281,6 +277,15 @@ module.exports = {
         );
       }
 
+      
+     if (casinoData.status !="ACTIVE") {
+        return SendResponse(
+          res,
+          "error",
+          `game (${casinoData.gameName} - ${casinoData.gameId} - ${casinoData.providerName}) is blocked by admin ` 
+        ); 
+     }
+      
       if (!user.status) {
         return SendResponse(res, "error", "user Inactive");
       }
@@ -338,7 +343,7 @@ module.exports = {
         }
       }
 
-      let operatorId = process.env.OPERATOR_ID;
+
 
       let casinoMultipleTimesCoins = user.intCasinoMultiply
         ? user.intCasinoMultiply
@@ -426,17 +431,22 @@ module.exports = {
 
       // let casinoData = await getInternationalGameData(bodyData.gameId)
 
-       let [casinoData, settingData] = await Promise.all([
-          getInternationalGameData(bodyData.gameId),
-          getSettingData(),
-       ]);
-      
-      
+      let [casinoData, settingData] = await Promise.all([
+        getInternationalGameData(bodyData.gameId),
+        getSettingData(),
+      ]);
+
+
       if (settingData && settingData.maxIntCasinoBet && (Math.abs(actualDebitAmount) > settingData.maxIntCasinoBet)) {
         return sendCasinoResponse(res, "transaction_invalid", balance);
       }
 
+      if (casinoData.status =="INACTIVE") {
+        return sendCasinoResponse(res, "transaction_invalid", balance);   
+      }
+    
       
+
 
       let balance = Math.round(userData.coins);
       if (actualDebitAmount > balance) {
@@ -571,7 +581,7 @@ module.exports = {
       let casinoRemark = `casino/${casinoData.subProviderName}/${casinoData.gameName}-(${_date()})`
 
       const crickPushTransactionLog = {
-        eventName:`${casinoData.subProviderName}-${casinoData.gameName}-(${_date()})`,
+        eventName: `${casinoData.subProviderName}-${casinoData.gameName}-(${_date()})`,
         amount: crickInsertAmount,
         clientProfitLoss: actualCreditAmount,
         marketId: casinoData.gameId,
@@ -594,7 +604,7 @@ module.exports = {
         superagentId: userData.superagentId,
         agentId: userData.agentId,
         clientId: userData.clientId,
-        transactionId : bodyData.transactionId,
+        transactionId: bodyData.transactionId,
         ownerLedgerAmount: crickInsertAmount * shareData.ownerParentCasinoShare,
         subownerLedgerAmount:
           crickInsertAmount * shareData.subownerParentCasinoShare,
@@ -625,6 +635,7 @@ module.exports = {
           crickInsertAmount * shareData.superagentCasinoProfitLossShare,
         agentProfitLoss:
           crickInsertAmount * shareData.agentCasinoProfitLossShare,
+        clientProfitLoss: crickInsertAmount,
       };
 
       await crickTransactionLogModel.create(crickPushTransactionLog)
@@ -715,33 +726,33 @@ module.exports = {
       }
 
       const casinoRemark = `casino/${casinoData?.subProviderName ?? "unknown"}/${casinoData?.gameName ?? "unknown"}-(${_date()})`;
-      
+
       const shareData = await casinoShareArray(userShareData, userData);
 
       await insertInternationalTransactionLogCasino(userData, transactionLog, shareData);
       const updateObj = { isDeclare: true };
 
-       const whereObj = {
+      const whereObj = {
         marketId: gameId + "",
         userId: userData._id,
         eventId: bodyData.roundId,
         selectionId: bodyData.transactionId,
         forBet: 1,
-       };
-      
+      };
+
       await TransactionLogModel.updateMany(whereObj, updateObj)
 
       let crickDeleteWhere = {
-          marketId: casinoData?.gameId ?? gameId,
-          eventId: casinoData?.gameId ?? gameId,
-          userId: userData.userId,
-          selectionId: bodyData.roundId,
-          marketType: "internationalCasino",
-        }
+        marketId: casinoData?.gameId ?? gameId,
+        eventId: casinoData?.gameId ?? gameId,
+        userId: userData.userId,
+        selectionId: bodyData.roundId,
+        marketType: "internationalCasino",
+      }
 
-      const [actualOverallTransactionFromtransactionLog , updateCoins , crickDelete] = await Promise.all([
+      const [actualOverallTransactionFromtransactionLog, updateCoins, crickDelete] = await Promise.all([
         TransactionLogModel.aggregate([
-              { $match: whereObj },
+          { $match: whereObj },
           {
             $group: {
               _id: "$userId",
@@ -759,12 +770,12 @@ module.exports = {
       let actualRollbackAmountInsert = Number(resultData?.insertAmount ?? actualRollbackAmount);
 
       if (actualOverallTransactionFromtransactionLog[0]) {
-        actualRollbackAmountInsert = actualOverallTransactionFromtransactionLog[0].totalCoins ? actualOverallTransactionFromtransactionLog[0].totalCoins : 0 
+        actualRollbackAmountInsert = actualOverallTransactionFromtransactionLog[0].totalCoins ? actualOverallTransactionFromtransactionLog[0].totalCoins : 0
       }
 
 
       const crickPushTransactionLog = {
-        eventName:`${casinoData.subProviderName}-${casinoData.gameName}-(${_date()})`,
+        eventName: `${casinoData.subProviderName}-${casinoData.gameName}-(${_date()})`,
         amount: actualRollbackAmountInsert,
         clientProfitLoss: actualRollbackAmountInsert,
         marketId: casinoData?.gameId ?? gameId,
@@ -788,7 +799,7 @@ module.exports = {
         agentId: userData.agentId,
         clientId: userData.clientId,
         transactionId: bodyData.transactionId,
-        
+
         ownerLedgerAmount: actualRollbackAmountInsert * (shareData.ownerParentCasinoShare ?? 0),
         subownerLedgerAmount: actualRollbackAmountInsert * (shareData.subownerParentCasinoShare ?? 0),
         superadminLedgerAmount: actualRollbackAmountInsert * (shareData.superadminParentCasinoShare ?? 0),
@@ -806,10 +817,11 @@ module.exports = {
         masterProfitLoss: actualRollbackAmountInsert * (shareData.masterCasinoProfitLossShare ?? 0),
         superagentProfitLoss: actualRollbackAmountInsert * (shareData.superagentCasinoProfitLossShare ?? 0),
         agentProfitLoss: actualRollbackAmountInsert * (shareData.agentCasinoProfitLossShare ?? 0),
+        clientProfitLoss: actualRollbackAmountInsert ? actualRollbackAmountInsert : 0,
         isRollback: true,
       };
 
-   
+
       await crickTransactionLogModel.create(crickPushTransactionLog);
 
       const elapsed = Date.now() - start;
@@ -831,7 +843,7 @@ module.exports = {
       if (userRes.status != "Success") {
         return SendResponse(res, "error", userRes.message);
       }
-      return SendResponse(res, "success", userRes.message , userRes.data);
+      return SendResponse(res, "success", userRes.message, userRes.data);
     } catch (err) {
       var msg = err.message || "SOMETHING_WENT_WRONG_IN_USER_CREATE";
       return SendResponse(res, "error", msg);
@@ -870,9 +882,10 @@ module.exports = {
           { userId: { $in: userIdArray } },
           {
             $set: {
-            status : bodyData.status,
-          } }
-        );  
+              status: bodyData.status,
+            }
+          }
+        );
 
 
         // for (let i = 0; i < userId.length; i++) {
@@ -881,16 +894,16 @@ module.exports = {
         //    await client.del(userId[i]);
         // }
 
-          const results = await Promise.allSettled(
-                userId.map((id) => client.del(id))
-             );
+        const results = await Promise.allSettled(
+          userId.map((id) => client.del(id))
+        );
 
-          results.forEach((result, index) => {
-            if (result.status === "rejected") {
-              console.error(`Failed to delete key: ${userId[index]}`, result.reason);
-            }
-          });
-        
+        results.forEach((result, index) => {
+          if (result.status === "rejected") {
+            console.error(`Failed to delete key: ${userId[index]}`, result.reason);
+          }
+        });
+
         return SendResponse(res, "success", "bulk User Updated Successfully");
       }
     } catch (err) {
@@ -968,7 +981,7 @@ module.exports = {
         return SendResponse(res, "error", updateData);
       }
 
-      
+
     } catch (error) {
       console.log("Update Coins Error", error);
     }
@@ -1495,7 +1508,7 @@ module.exports = {
         $ne: loginData.userType,
       };
 
-    
+
 
       query = await whereHelper(loginData, query);
 
@@ -1912,7 +1925,7 @@ module.exports = {
       let updateStatus = {};
 
       if (statusUpdate) {
-        updateStatus.status = bodyData.statusUpdate ? 1 : 0 ;
+        updateStatus.status = bodyData.statusUpdate ? 1 : 0;
       }
 
       if (betStatusUpdate) {
@@ -1926,26 +1939,26 @@ module.exports = {
       await UserModel.updateMany(whereObj, updateStatus);
 
       let downLineUserData = await UserModel.find(whereObj, {
-        userType: 1, 
+        userType: 1,
         userId: 1,
         status: 1,
         betStatus: 1,
         casinoStatus: 1,
         intCasinoStatus: 1,
         matkaStatus: 1,
-        username:1
+        username: 1
       })
 
       downLineUserData && downLineUserData.map(async (downlineData) => {
         let userWhere = { [`${downlineData.userType}Id`]: new ObjectId(`${downlineData.userId}`) };
-         await UserModel.updateMany(
+        await UserModel.updateMany(
           userWhere,
           { $set: updateStatus }
         );
-        await client.del(downlineData.userId+"")
+        await client.del(downlineData.userId + "")
       });
 
-      await client.del(loginData.userId+"")
+      await client.del(loginData.userId + "")
 
       return SendResponse(
         res,
@@ -1956,44 +1969,55 @@ module.exports = {
       console.log(e.message);
     }
   },
-  getBetInfoyTransactionId: async (req, res) => {
-    try {
-      const bodyData = req.body;
-      if (!bodyData.transactionId) {
-        return SendResponse(
-          res,
-          "error",
-          "transactionId Required or not empty"
-        );
-      }
-
-      let hitUrl = `${process.env.BET_INFO_INTERNATIONAL}`
-      let operatorId = `${process.env.OPERATOR_ID}`
-
-      let sendPayLoad = {
-        transactionId: bodyData.transactionId.trim(),
-        operatorId: operatorId
-      }
-
-      // _d(sendPayLoad , "sendPayLoad")
-      // _d(hitUrl , "hitUrl")
-
-      let returnData = {}
-      let returnD = await axios.post(hitUrl, sendPayLoad)
-      if (returnD.data) {
-        returnData = returnD.data
-      }
-
+getBetInfoyTransactionId: async (req, res) => {
+  try {
+    const { transactionId } = req.body;
+    if (!transactionId?.trim()) {
       return SendResponse(
         res,
-        "success",
-        "return data get successfully",
-        returnData
+        "error",
+        "transactionId is required and cannot be empty"
       );
-    } catch (e) {
-      console.log(e.message);
     }
-  },
+    
+    const payload = {
+      transactionId: transactionId.trim(),
+      operatorId: process.env.OPERATOR_ID,
+    };
+
+    const urls = [
+      process.env.BET_INFO_INTERNATIONAL_LKR,
+      process.env.BET_INFO_INTERNATIONAL_INR,
+    ];
+
+    const responses = await Promise.allSettled(
+      urls.map((url) => axios.post(url, payload))
+    );
+
+    const successfulResponse = responses.find(
+      (response) =>
+        response.status === "fulfilled" &&
+        response.value?.data
+    );
+
+    const returnData = successfulResponse?.value?.data || {};
+
+    return SendResponse(
+      res,
+      "success",
+      "Return data get successfully",
+      returnData
+    );
+  } catch (error) {
+    console.error("Error in getBetInfoyTransactionId:", error);
+
+    return SendResponse(
+      res,
+      "error",
+      error.message || "Something went wrong"
+    );
+  }
+},
   downlineCount: async (req, res) => {
     try {
       const bodyData = req.body;
@@ -2001,8 +2025,8 @@ module.exports = {
       let userType = loginData.userType
       let userId = loginData.userId
       if (bodyData.userId && bodyData.userType) {
-         userType = bodyData.userType
-         userId = bodyData.userId
+        userType = bodyData.userType
+        userId = bodyData.userId
       }
       let returnData = await userCountDetails(userType, userId)
       return SendResponse(

@@ -63,7 +63,7 @@ const matkaResult = async (req, res) => {
   }
 
 
-  let dateWhere = await dateWhereCond(date);
+  let dateWhere = await dateWhereCond(date, date);
   let where = { matkaEventId: matkaEventId, date: dateWhere };
 
   let matkaChartDetail = await matkaResultChartModel.findOne(where);
@@ -683,7 +683,7 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
   try{
 
     dateWhere.$gte = Number(dateWhere.$gte)
-    dateWhere.$lt = Number(dateWhere.$lt)
+    dateWhere.$lte = Number(dateWhere.$lt)
 
     let betsWhere = {
       matkaEventId: Number(matkaEventId),
