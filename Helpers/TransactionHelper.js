@@ -28,6 +28,19 @@ const {emitToUser} =  require("../socket.js")
 const { msg } = require("./MessageHelper");
 require("dotenv").config();
 
+// Check if replica set is available (cached at startup)
+let isReplicaSet = null;
+async function checkReplicaSet() {
+  if (isReplicaSet !== null) return isReplicaSet;
+  try {
+    await mongoose.connection.db.admin().replSetGetStatus();
+    isReplicaSet = true;
+  } catch {
+    isReplicaSet = false;
+  }
+  return isReplicaSet;
+}
+
 const UpdateUserCoins = async (
   coins,
   userId,
@@ -37,7 +50,8 @@ const UpdateUserCoins = async (
   onCreate,
   isCash = false
 ) => {
-  const session = await mongoose.startSession();
+  const useTransaction = await checkReplicaSet();
+  const session = useTransaction ? await mongoose.startSession() : null;
   try {
     const transactionAmount = Number(coins);
 
@@ -213,216 +227,182 @@ const UpdateUserCoins = async (
     let returnData = {};
 
     // ============================================================
-    // 9. MONGODB TRANSACTION — RACE CONDITION PROOF
+    // 9. COIN UPDATE — ATOMIC (works on both standalone + replica set)
     // ============================================================
 
-    await session.withTransaction(
-      async () => {
-        // ATOMIC DEBIT — sender must have coins >= amount
-        const debitResult = await UserModel.updateOne(
-          {
-            _id: senderId,
-            status: 1,
-            isDeleted: false,
-            coins: { $gte: amount },
+    const sessionOpt = session ? { session } : {};
+
+    const executeCoinsUpdate = async () => {
+      // ATOMIC DEBIT — sender must have coins >= amount
+      const debitResult = await UserModel.updateOne(
+        { _id: senderId, status: 1, isDeleted: false, coins: { $gte: amount } },
+        { $inc: { coins: -amount } },
+        sessionOpt
+      );
+
+      if (debitResult.modifiedCount !== 1) {
+        throw new Error("INSUFFICIENT_COINS");
+      }
+
+      // ATOMIC CREDIT
+      const creditResult = await UserModel.updateOne(
+        { _id: receiverId, status: 1, isDeleted: false },
+        { $inc: { coins: amount } },
+        sessionOpt
+      );
+
+      if (creditResult.modifiedCount !== 1) {
+        // Rollback debit if credit fails (standalone mode)
+        if (!session) {
+          await UserModel.updateOne({ _id: senderId }, { $inc: { coins: amount } });
+        }
+        throw new Error("RECEIVER_UPDATE_FAILED");
+      }
+
+      // VERIFY: no negative coins
+      const senderAfter = await UserModel.findById(senderId, { coins: 1 }).lean();
+      if (!senderAfter || senderAfter.coins < 0) {
+        // Rollback both (standalone mode)
+        if (!session) {
+          await UserModel.updateOne({ _id: senderId }, { $inc: { coins: amount } });
+          await UserModel.updateOne({ _id: receiverId }, { $inc: { coins: -amount } });
+        }
+        throw new Error("NEGATIVE_COINS_DETECTED");
+      }
+
+      // ========================================================
+      // TRANSACTION LOG DATA
+      // ========================================================
+
+      const creatorCoinsUpdated = transactionAmount * -1;
+      const userCoinsUpdated = transactionAmount;
+      const creatorUsertypeId = `${creatorData.userType}Id`;
+      const usertypeId = `${userData.userType}Id`;
+
+      let creatorDepositWithdrawType = msg("depositWithdraw.depositTo", { username: userData.username });
+      let userDepositWithdrawType = msg("depositWithdraw.depositTo", { username: userData.username });
+      let userStatementStatus = "deposit";
+
+      if (transactionAmount < 0) {
+        creatorDepositWithdrawType = msg("depositWithdraw.withdrawFrom", { username: userData.username });
+        userDepositWithdrawType = msg("depositWithdraw.withdrawFrom", { username: userData.username });
+        userStatementStatus = "withdraw";
+      }
+
+      // CREATOR + USER TRANSACTION LOGS
+      const [creatorTransaction, userTransaction] = await Promise.all([
+        TransactionLogModel.create(
+          session ? [{
+            userId: creatorData._id, amount: creatorCoinsUpdated, overallType: "depositWithdraw",
+            remarks: creatorDepositWithdrawType, [creatorUsertypeId]: creatorData.userId,
+            userType: creatorData.userType, isDeclare: 1, ...(isCash ? { isCash: true } : {}),
+          }] : {
+            userId: creatorData._id, amount: creatorCoinsUpdated, overallType: "depositWithdraw",
+            remarks: creatorDepositWithdrawType, [creatorUsertypeId]: creatorData.userId,
+            userType: creatorData.userType, isDeclare: 1, ...(isCash ? { isCash: true } : {}),
           },
-          {
-            $inc: { coins: -amount },
+          session ? { session } : undefined
+        ),
+        TransactionLogModel.create(
+          session ? [{
+            userId: userData._id, amount: userCoinsUpdated, overallType: "depositWithdraw",
+            userType: userData.userType, remarks: userDepositWithdrawType,
+            [usertypeId]: userData.userId, isDeclare: 1, ...(isCash ? { isCash: true } : {}),
+          }] : {
+            userId: userData._id, amount: userCoinsUpdated, overallType: "depositWithdraw",
+            userType: userData.userType, remarks: userDepositWithdrawType,
+            [usertypeId]: userData.userId, isDeclare: 1, ...(isCash ? { isCash: true } : {}),
           },
-          { session }
-        );
+          session ? { session } : undefined
+        ),
+      ]);
 
-        if (debitResult.modifiedCount !== 1) {
-          throw new Error("INSUFFICIENT_COINS");
-        }
+      const creatorTxId = session ? creatorTransaction[0]._id : creatorTransaction._id;
+      const userTxId = session ? userTransaction[0]._id : userTransaction._id;
+      returnData.creatorTransactionId = creatorTxId;
+      returnData.userTransactionId = userTxId;
 
-        // ATOMIC CREDIT
-        const creditResult = await UserModel.updateOne(
-          {
-            _id: receiverId,
-            status: 1,
-            isDeleted: false,
-          },
-          {
-            $inc: { coins: amount },
-          },
-          { session }
-        );
+      // ========================================================
+      // STATEMENTS
+      // ========================================================
 
-        if (creditResult.modifiedCount !== 1) {
-          throw new Error("RECEIVER_UPDATE_FAILED");
-        }
+      const statementDataCreator = {
+        transactionId: creatorTxId, amount: creatorCoinsUpdated,
+        oldAmount: creatorCoins, newAmount: creatorCoins + creatorCoinsUpdated,
+        statementFor: constant.ACCOUNT_STATEMENT, userRemark: userRemark,
+        remark: msg("statement.coinsUpdatedTo", { userName: userData.name, username: userData.username, parentUsername: parentData.username }),
+      };
 
-        // VERIFY: sender coins must not be negative after debit
-        const senderAfter = await UserModel.findById(senderId, { coins: 1 }).session(session).lean();
-        if (!senderAfter || senderAfter.coins < 0) {
-          throw new Error("NEGATIVE_COINS_DETECTED");
-        }
+      const statementDataUser = {
+        transactionId: userTxId, amount: userCoinsUpdated,
+        oldAmount: userCoins, newAmount: userCoins + userCoinsUpdated,
+        userRemark: userRemark, statementFor: constant.ACCOUNT_STATEMENT,
+        remark: msg("statement." + userStatementStatus + "Remark", {
+          oldAmount: userCoins, newAmount: userCoins + userCoinsUpdated,
+          creatorName: creatorData.name, creatorUsername: creatorData.username,
+          parentUsername: parentData.username, parentName: parentData.name,
+        }),
+      };
 
-        // VERIFY: receiver coins must not be negative after credit
-        const receiverAfter = await UserModel.findById(receiverId, { coins: 1 }).session(session).lean();
-        if (!receiverAfter || receiverAfter.coins < 0) {
-          throw new Error("NEGATIVE_COINS_DETECTED");
-        }
+      const [userStatement, creatorStatement] = await Promise.all([
+        InsertUserStatement(statementDataUser, userData, session),
+        InsertUserStatement(statementDataCreator, creatorData, session),
+      ]);
 
-        // ========================================================
-        // TRANSACTION LOG DATA
-        // ========================================================
+      returnData.userStatementId = userStatement._id;
+      returnData.creatorStatementId = creatorStatement._id;
 
-        const creatorCoinsUpdated = transactionAmount * -1;
-        const userCoinsUpdated = transactionAmount;
-        const creatorUsertypeId = `${creatorData.userType}Id`;
-        const usertypeId = `${userData.userType}Id`;
+      // ========================================================
+      // CRICK TRANSACTIONS
+      // ========================================================
 
-        let creatorDepositWithdrawType = msg("depositWithdraw.depositTo", { username: userData.username });
-        let userDepositWithdrawType = msg("depositWithdraw.depositTo", { username: userData.username });
-        let userStatementStatus = "deposit";
+      const COINS_DIVIDER = Number(process.env.COINS_DIVIDER || 100);
 
-        if (transactionAmount < 0) {
-          creatorDepositWithdrawType = msg("depositWithdraw.withdrawFrom", { username: userData.username });
-          userDepositWithdrawType = msg("depositWithdraw.withdrawFrom", { username: userData.username });
-          userStatementStatus = "withdraw";
-        }
+      const creatorCrickMsgKey = creatorCoinsUpdated > 0 ? "crick.withdrawRemark" : "crick.depositRemark";
+      const creatorRemarkCrick = msg(creatorCrickMsgKey, {
+        userRemark, username: userData.username, creatorUsername: creatorData.username,
+        amount: Math.abs(Math.round(creatorCoinsUpdated / COINS_DIVIDER)), dateTime: _date_time(),
+      });
 
-        // CREATOR TRANSACTION LOG
-        const creatorTransaction = await TransactionLogModel.create(
-          [
-            {
-              userId: creatorData._id,
-              amount: creatorCoinsUpdated,
-              overallType: "depositWithdraw",
-              remarks: creatorDepositWithdrawType,
-              [creatorUsertypeId]: creatorData.userId,
-              userType: creatorData.userType,
-              isDeclare: 1,
-              ...(isCash ? { isCash: true } : {}),
-            },
-          ],
-          { session }
-        );
+      const userCrickMsgKey = transactionAmount < 0 ? "crick.withdrawRemark" : "crick.depositRemark";
+      const userRemarkCrick = msg(userCrickMsgKey, {
+        userRemark, username: userData.username, creatorUsername: creatorData.username,
+        amount: Math.abs(Math.round(transactionAmount / COINS_DIVIDER)), dateTime: _date_time(),
+      });
 
-        // USER TRANSACTION LOG
-        const userTransaction = await TransactionLogModel.create(
-          [
-            {
-              userId: userData._id,
-              amount: userCoinsUpdated,
-              overallType: "depositWithdraw",
-              userType: userData.userType,
-              remarks: userDepositWithdrawType,
-              [usertypeId]: userData.userId,
-              isDeclare: 1,
-              ...(isCash ? { isCash: true } : {}),
-            },
-          ],
-          { session }
-        );
+      const crickCreatorTx = {
+        amount: creatorCoinsUpdated, [`${creatorData.userType}ProfitLoss`]: creatorCoinsUpdated,
+        transactionType: "depositWithdrawal", remarks: creatorRemarkCrick,
+        userId: creatorData.userId, creatorId: creatorData.userId,
+        [`${creatorData.userType}Id`]: creatorData.userId, ...(isCash ? { isCash: true } : {}),
+      };
 
-        returnData.creatorTransactionId = creatorTransaction[0]._id;
-        returnData.userTransactionId = userTransaction[0]._id;
+      const crickUserTx = {
+        amount: transactionAmount, transactionType: "depositWithdrawal", remarks: userRemarkCrick,
+        userId: userData.userId, creatorId: creatorData._id,
+        [`${userData.userType}Id`]: userData.userId,
+        [`${userData.userType}ProfitLoss`]: transactionAmount, ...(isCash ? { isCash: true } : {}),
+      };
 
-        // ========================================================
-        // STATEMENTS
-        // ========================================================
+      const [crickTxCreator, crickTxUser] = await Promise.all([
+        crickTransactionLModel.create(session ? [crickCreatorTx] : crickCreatorTx, session ? { session } : undefined),
+        crickTransactionLModel.create(session ? [crickUserTx] : crickUserTx, session ? { session } : undefined),
+      ]);
 
-        const senderNewCoins = senderOldCoins - amount;
-        const receiverNewCoins = receiverOldCoins + amount;
+      returnData.crickTransactionCreatorId = session ? crickTxCreator[0]._id : crickTxCreator._id;
+      returnData.crickTransactionUserId = session ? crickTxUser[0]._id : crickTxUser._id;
+    };
 
-        const statementDataCreator = {
-          transactionId: creatorTransaction[0]._id,
-          amount: creatorCoinsUpdated,
-          oldAmount: creatorCoins,
-          newAmount: creatorCoins + creatorCoinsUpdated,
-          statementFor: constant.ACCOUNT_STATEMENT,
-          userRemark: userRemark,
-          remark: msg("statement.coinsUpdatedTo", { userName: userData.name, username: userData.username, parentUsername: parentData.username }),
-        };
-
-        const statementDataUser = {
-          transactionId: userTransaction[0]._id,
-          amount: userCoinsUpdated,
-          oldAmount: userCoins,
-          newAmount: userCoins + userCoinsUpdated,
-          userRemark: userRemark,
-          statementFor: constant.ACCOUNT_STATEMENT,
-          remark: msg("statement." + userStatementStatus + "Remark", {
-            oldAmount: userCoins,
-            newAmount: userCoins + userCoinsUpdated,
-            creatorName: creatorData.name,
-            creatorUsername: creatorData.username,
-            parentUsername: parentData.username,
-            parentName: parentData.name,
-          }),
-        };
-
-        const [userStatement, creatorStatement] = await Promise.all([
-          InsertUserStatement(statementDataUser, userData, session),
-          InsertUserStatement(statementDataCreator, creatorData, session),
-        ]);
-
-        returnData.userStatementId = userStatement._id;
-        returnData.creatorStatementId = creatorStatement._id;
-
-        // ========================================================
-        // CRICK TRANSACTIONS
-        // ========================================================
-
-        const COINS_DIVIDER = Number(process.env.COINS_DIVIDER || 100);
-
-        const creatorCrickMsgKey = creatorCoinsUpdated > 0 ? "crick.withdrawRemark" : "crick.depositRemark";
-        const creatorRemarkCrick = msg(creatorCrickMsgKey, {
-          userRemark: userRemark,
-          username: userData.username,
-          creatorUsername: creatorData.username,
-          amount: Math.abs(Math.round(creatorCoinsUpdated / COINS_DIVIDER)),
-          dateTime: _date_time(),
-        });
-
-        const userCrickMsgKey = transactionAmount < 0 ? "crick.withdrawRemark" : "crick.depositRemark";
-        const userRemarkCrick = msg(userCrickMsgKey, {
-          userRemark: userRemark,
-          username: userData.username,
-          creatorUsername: creatorData.username,
-          amount: Math.abs(Math.round(transactionAmount / COINS_DIVIDER)),
-          dateTime: _date_time(),
-        });
-
-        const crickCreatorTransaction = {
-          amount: creatorCoinsUpdated,
-          [`${creatorData.userType}ProfitLoss`]: creatorCoinsUpdated,
-          transactionType: "depositWithdrawal",
-          remarks: creatorRemarkCrick,
-          userId: creatorData.userId,
-          creatorId: creatorData.userId,
-          [`${creatorData.userType}Id`]: creatorData.userId,
-          ...(isCash ? { isCash: true } : {}),
-        };
-
-        const crickUserTransaction = {
-          amount: transactionAmount,
-          transactionType: "depositWithdrawal",
-          remarks: userRemarkCrick,
-          userId: userData.userId,
-          creatorId: creatorData._id,
-          [`${userData.userType}Id`]: userData.userId,
-          [`${userData.userType}ProfitLoss`]: transactionAmount,
-          ...(isCash ? { isCash: true } : {}),
-        };
-
-        const [crickTransactionCreator, crickTransactionUser] = await Promise.all([
-          crickTransactionLModel.create([crickCreatorTransaction], { session }),
-          crickTransactionLModel.create([crickUserTransaction], { session }),
-        ]);
-
-        returnData.crickTransactionCreatorId = crickTransactionCreator[0]._id;
-        returnData.crickTransactionUserId = crickTransactionUser[0]._id;
-      },
-      {
+    // Execute with or without transaction
+    if (session) {
+      await session.withTransaction(executeCoinsUpdate, {
         readConcern: { level: "snapshot" },
         writeConcern: { w: "majority" },
         maxCommitTimeMS: 5000,
-      }
-    );
+      });
+    } else {
+      await executeCoinsUpdate();
+    }
 
     // ============================================================
     // 10. TRANSACTION COMMITTED — read actual current balance
@@ -542,7 +522,7 @@ const UpdateUserCoins = async (
     return returnResponse("error", msg("transaction.coinsUpdateFailed"));
 
   } finally {
-    await session.endSession();
+    if (session) await session.endSession();
   }
 };
 
