@@ -262,6 +262,15 @@ const FancyListModel = mongoose.model("FancyBetList", FancyBetsListSchema);
           userId: 1,
         },
       },
+      // Compound index for session bet placement query
+      {
+        key: {
+          userId: 1,
+          marketId: 1,
+          selectionId: 1,
+          isDeleted: 1,
+        },
+      },
     ];
 
     for (const index of neededIndexes) {

@@ -58,8 +58,6 @@ var requestIp = require("request-ip");
 
 const moment = require("moment-timezone");
 moment.tz.setDefault("Asia/Kolkata");
-
-
 const { emitToAllActiveUsers } = require("../../socket.js")
 
 const {
@@ -77,18 +75,34 @@ const {
   updateBulkCoinsExposureUserByMarketId,
   wholeTransactionMarketData,
 } = require("../../Helpers/TransactionHelper");
-const AWS = require("aws-sdk");
-AWS.config.update({
-  accessKeyId: process.env.S3_ACCESS_KEY,
-  secretAccessKey: process.env.S3_SECREAT_KEY,
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const s3Client = new S3Client({
+  credentials: {
+    accessKeyId: process.env.S3_ACCESS_KEY,
+    secretAccessKey: process.env.S3_SECREAT_KEY,
+  },
   region: process.env.S3_REGION,
 });
-const s3 = new AWS.S3();
 
 const axios = require("axios");
 const { TRUE } = require("../../utils/constants");
 const { TransactGetItemsCommand } = require("@aws-sdk/client-dynamodb");
 const ShareModel = require("../../Models/User/Share.model");
+const { parsePhoneNumberFromString } = require("libphonenumber-js");
+
+function removeCountryCode(phone) {
+  if (!phone) return phone;
+
+  const phoneNumber = parsePhoneNumberFromString(
+    String(phone).trim().startsWith("+")
+      ? String(phone).trim()
+      : `+${String(phone).trim()}`
+  );
+
+  if (!phoneNumber) return phone;
+
+  return phoneNumber.nationalNumber;
+}
 
 let createDomain = async (req, res) => {
   const bodyData = req.body;
@@ -245,11 +259,6 @@ const domainSettingByDomainName = async (req, res) => {
     }
   
   
-  _d(domainUrl , "domainUrl")
-  
-  
-  
-
   if (!domainData) {
     domainData = await DomainModel.findOne({
       domainUrl: domainUrl + "",
@@ -307,6 +316,9 @@ const depositReq = async (req, res) => {
 
   const userData = await UserModel.findOne({ userId: userId });
 
+
+  //_d(userData , "userData")
+
   if (!userData.status) {
     return SendResponse(
       res,
@@ -334,6 +346,7 @@ const depositReq = async (req, res) => {
     superadminId: userData.superadminId,
     ownerId: userData.ownerId,
     creatorId: userData.creatorId,
+    subagentId: userData.subagentId,
     amount: bodyData.amount,
     utrNo: bodyData.utrNo,
     reqType: "deposit",
@@ -740,8 +753,6 @@ const getAccountDetailsByUserId = async (req, res) => {
 
 const getDepositWithdrawList = async (req, res) => {
   const bodyData = req.body;
-
-  _d(bodyData, "bodyData ")
   const loggedUserData = req.loggedInUser;
   const userId = loggedUserData.userId;
   const userType = loggedUserData.userType;
@@ -752,6 +763,7 @@ const getDepositWithdrawList = async (req, res) => {
       userId: new ObjectId(userId),
     };
   }
+  
   if (bodyData.status) {
     whereObj.status = bodyData.status;
   }
@@ -800,7 +812,6 @@ const getDepositWithdrawList = async (req, res) => {
     };
   }
 
-  _d(whereObj, "whereObj")
 
   const reqList = await DepositWithdrawModel.find(whereObj, specific).sort({
     _id: -1,
@@ -816,6 +827,9 @@ const allUserTypePasswordUpdate = async (req, res) => {
   const loggedUserData = req.loggedInUser;
   const userId = loggedUserData.userId;
   const userType = loggedUserData.userType;
+
+
+  _dx("stop")
 
   if (userType !== "owner") {
     return SendResponse(
@@ -1679,7 +1693,8 @@ const fileUploadToS3 = async (req, res) => {
     uploadImageToS3(filePath, bucketName)
       .then((url) => {
         let sendData = {
-          imageName: fileData.filename,
+          imageName: url,
+          imagePathInlocal: fileData.filename,
           imageUrl: url,
         };
 
@@ -1703,13 +1718,12 @@ const uploadImageToS3 = async (filePath, bucketName) => {
     Bucket: bucketName,
     Key: fileName,
     Body: fileContent,
-    ContentType: "image/jpeg", // Adjust content type based on your image format
+    ContentType: "image/jpeg",
   };
 
   try {
-    const data = await s3.upload(params).promise();
-    console.log(`File uploaded successfully. ${data.Location}`);
-    return data.Location; // URL of the uploaded file
+    await s3Client.send(new PutObjectCommand(params));
+    return `https://${bucketName}.s3.${process.env.S3_REGION}.amazonaws.com/${fileName}`;
   } catch (error) {
     console.error(`Error uploading file: ${error.message}`);
     throw error;
@@ -1936,11 +1950,16 @@ const registerClient = async (req, res) => {
     let signupBonusType = "flat"
     let signupBonusValue = 0
 
+
     if (websiteData && websiteData.signUpBonusSetting && websiteData.signUpBonusSetting.signupBonus) {
       isSignupBonusCheck = websiteData.signUpBonusSetting.signupBonus
       signupBonusType = websiteData.signUpBonusSetting.signupBonusType
       signupBonusValue = websiteData.signUpBonusSetting.signupBonusValue
     }
+
+
+   // _dx(websiteData , "websiteData")
+
 
     if (!websiteData.isRegister) {
       return SendResponse(
@@ -1950,8 +1969,10 @@ const registerClient = async (req, res) => {
       );
     }
 
+
     if (websiteData && websiteData.isSignUpOtp) {
       let mobileNo = bodyData.mobileNo
+      let errorReturn = false
       if (!bodyData.otp) {
         return SendResponse(
           res,
@@ -1959,23 +1980,27 @@ const registerClient = async (req, res) => {
           `otp is reqired`
         );
       }
-      let otp = bodyData.otp
-      let clientOtpByPhoneNo = await client.get(`otp:value:${mobileNo}`);
 
-      if (!clientOtpByPhoneNo) {
-        return SendResponse(
-          res,
-          "error",
-          `otp is expired ! trye again after sometime`
-        );
+      let otp = bodyData.otp
+      let [checkOtp, clientOtpByPhoneNo] = await Promise.all([
+        verifyOtpByMessageCentral(mobileNo, otp),
+        client.get(`otp:value:${mobileNo}`)
+      ])
+
+
+      if (checkOtp || clientOtpByPhoneNo == otp) {
+        errorReturn = true
       }
-      if (clientOtpByPhoneNo != otp) {
+         
+       
+      if (!errorReturn) {
         return SendResponse(
           res,
           "error",
           `otp is incorrect ! Please enter correct otp`
         );
       }
+
     }
 
     if (!websiteData.assignAgentId) {
@@ -2015,9 +2040,6 @@ const registerClient = async (req, res) => {
       return SendResponse(res, "error", `"mobile no already exists`); 
     }
 
-
-  
-
     let subagentId = null
     let subagentReferralCode = null
     if (bodyData.referralCode && bodyData.referralCode != "") {
@@ -2028,6 +2050,7 @@ const registerClient = async (req, res) => {
         UserModel.findOne({ referral: referralCode }),
         MlmChainListModel.findOne({ referral: referralCode })
       ])
+
       if (subagentData && subagentData != null && subagentData.agentId) {
         newAgentAssignId = new ObjectId(subagentData.agentId)
         subagentId = new ObjectId(subagentData._id)
@@ -2086,20 +2109,19 @@ const registerClient = async (req, res) => {
       isDirect: true,
       isPasswordChanged: true,
     };
-
+    
     const userRes = await UserCreate(objectData, agentData);
     let clientId = null
     if (userRes && userRes.data) {
       clientId = userRes.data._id
     }
 
-
     if (subagentId && subagentId != null) {
       let updateObj = {
         subagentId: subagentId,
         subagentReferralCode: subagentReferralCode,
       }
-      await UserModel.updateOne({
+      let updateUser = await UserModel.updateOne({
         _id : clientId
       }, {
         $set : updateObj
@@ -2114,8 +2136,9 @@ const registerClient = async (req, res) => {
       );
     }
 
-    if (isSignupBonusCheck && signupBonusValue != 0) {
-      let depositCoins = signupBonusType == "flat" ? signupBonusValue : (signupBonusValue * coins) / 100
+
+    if (signupBonusValue != 0) {
+      let depositCoins = signupBonusValue 
       let depositremarks = `signupBonus`;
       const updateCoins = await UpdateUserCoins(
         depositCoins,
@@ -3219,8 +3242,8 @@ const deleteUserData = async (req, res) => {
     [`${userData.userType}Id`]: new ObjectId(userData._id)
   }
 
-  _d(userData.username, userData.name)
-  _d(deleteWhere)
+  // _d(userData.username, userData.name)
+  // _d(deleteWhere)
 
   let returnArray = {}
 
@@ -3406,7 +3429,7 @@ async function missingShareDoc(req, res) {
               { upsert: true }
             );
 
-            _d(updateUser, "ddd")
+          //  _d(updateUser, "ddd")
           }
         }
       })
@@ -4214,7 +4237,6 @@ const getWhatsAppOtp = async (req, res) => {
     const ipCountKey = `otp:ipcount:${ip}`;
     const ipBlockKey = `otp:ipblock:${ip}`;
     const isIpBlocked = await client.exists(ipBlockKey);
-
     if (isIpBlocked) {
       const blockTTL = await client.ttl(ipBlockKey);
       return SendResponse(res, "error", `Too many requests from your IP. Try again in ${blockTTL}s.`);
@@ -4236,8 +4258,6 @@ const getWhatsAppOtp = async (req, res) => {
     }
 
     let otpCount = parseInt(await client.get(otpCountKey)) || 0;
-
-
     let cooldown = 0;
     if (otpCount === 0) cooldown = 30;
     else if (otpCount === 1) cooldown = 60;
@@ -4251,7 +4271,10 @@ const getWhatsAppOtp = async (req, res) => {
     await client.incr(otpCountKey);
     await client.expire(otpCountKey, 600);
     await client.setex(otpCooldownKey, cooldown, "locked");
-    return SendResponse(res, "success", "OTP sent successfully", otp);
+
+    let status = returnData.status ? "success" : "error"
+    
+    return SendResponse(res, status , "" ,returnData);
   } catch (err) {
     console.error("Unexpected OTP Error:", err);
     return SendResponse(res, "error", "An unexpected error occurred. Please try again.");
@@ -4327,44 +4350,77 @@ const sendMessageotpByMessageApi = async (numbers, otp, isForget = false) => {
       return "Phone number and OTP are required";
     }
     let message = `your signup otp is ${otp} ! thanks for connecting with us`
-
     if (isForget) {
       message = `your forget password  otp is ${otp} ! thanks for connecting with us`
     }
 
-    // const url = `https://www.fast2sms.com/dev/bulkV2?authorization=WnilL4H61qgFAvMGhcKfs5IzCQZjxt9dkNVm0TOJ7eab2Xur3UqBtEoKhR6e8AT9b5xYldmjykDn3P1p&route=q&message=${message}&flash=0&numbers=${numbers}&schedule_time=`;
-    // const response = await axios.get(url);
-
+    try {
+       numbers = removeCountryCode(String(numbers))
     const response = await axios.post(
-      `https://ninzasms.in.net/auth/send_sms`,
+      "https://cpaas.messagecentral.com/verification/v3/send",
+      null,
       {
-        sender_id: "15851",
-        variables_values: otp,
-        numbers: numbers,
-       // rout: "waninza"
-      },
-      {
+        params: {
+          countryCode: "91",
+          customerId: "C-902427E4C0DC4CC",
+          flowType: "SMS",
+          mobileNumber: String(numbers),
+          otpLength: 6,
+        },
         headers: {
-          authorization: "NINZASMS7917c30ccd6d01e499614fc7f6195d21d1c86be584fa7d2d01c7",
-          "content-type": "application/json"
-        }
+          Accept: "*/*",
+          authToken: "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJDLTkwMjQyN0U0QzBEQzRDQyIsImlhdCI6MTc4NzgzNDA0MCwiZXhwIjoxOTQ1NTE0MDQwfQ.yrybxF5JBHYa5uyEBABTpoYOFvnrUfegu0fadQvtNo0mRp1UI2ufJL-NdlVfDF1DCrpOdzM7a4bHpYUGhePWoQ",
+        },
+        timeout: 10000,
       }
     );
-
-
-    console.log("Response:", response.data);
- 
+  
     if (response && response.data) {
       returnData.data = response.data
-      returnData.status = true
+      returnData.status = response.data.message == "SUCCESS" ? true : false
     }
-
+  
+    await client.set(`verificationId_${numbers}` , response?.data?.data?.verificationId)
+  
+    } catch (e) {
+      console.log(e.message , "sendMessageotpByMessageApi errro")
+    }
+    
     return returnData
   
   } catch (error) {
     console.error("❌ Error sending WhatsApp message:", error.message);
   }
 };
+
+
+
+const verifyOtpByMessageCentral = async (numbers, otp) => {
+  numbers = removeCountryCode(String(numbers))
+  let verificationId = await client.get(`verificationId_${numbers}`)
+  const responsefinal = await axios.get(
+        "https://cpaas.messagecentral.com/verification/v3/validateOtp",
+        {
+          params: {
+          countryCode: "91",
+          customerId: "C-902427E4C0DC4CC",
+          flowType: "SMS",
+          mobileNumber: String(numbers),
+          verificationId: String(verificationId),
+          code : Number(otp),
+        },
+          headers: {
+            Accept: "*/*",
+            authToken: "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJDLTkwMjQyN0U0QzBEQzRDQyIsImlhdCI6MTc4NzgzNDA0MCwiZXhwIjoxOTQ1NTE0MDQwfQ.yrybxF5JBHYa5uyEBABTpoYOFvnrUfegu0fadQvtNo0mRp1UI2ufJL-NdlVfDF1DCrpOdzM7a4bHpYUGhePWoQ",
+          },
+        }
+  );
+  let returnData = false
+  if (responsefinal && responsefinal.data && responsefinal.data.message == "SUCCESS") {
+    returnData = true
+  }
+  return returnData
+}
 
 const userPasswordChangeByMobile = async (req, res) => {
   try {
@@ -5709,6 +5765,160 @@ const userExposureListUpdateBulk = async (req, res) => {
 };
 
 
+
+const cancelWithdrawReqByclient = async (req, res) => {
+  const bodyData = req.body;
+  const loggedUserData = req.loggedInUser;
+  const userId = loggedUserData.userId;
+  const userType = loggedUserData.userType;
+  const JoiSchema = Joi.object({
+    reqId: Joi.string().required(),
+  }).options({ abortEarly: true, allowUnknown: true });
+  const { error } = JoiSchema.validate(bodyData);
+  if (error) {
+    const errorMessages = error.details.map((detail) => detail.message);
+    return SendResponse(res, "error", "Failed In validation", errorMessages);
+  }
+
+  if (userType != "client") {
+    return SendResponse(res, "error", "only client can cancel withdraw request");
+  }
+
+  let websiteSettting = await getWebsiteDataByReq(req);
+
+
+  let websiteData = {}
+  if (websiteSettting && websiteSettting.domainData) {
+    websiteData = websiteSettting.domainData
+  }
+
+  let where = {
+    _id: new ObjectId(bodyData.reqId),
+    userId: new ObjectId(userId),
+    reqType: "withdraw",
+    status: "pending",
+  };
+
+  let reqData = await DepositWithdrawModel.findOne(where);
+  if (!reqData) {
+    return SendResponse(res, "error", "request not found");
+  }
+
+  if (reqData.status != "pending") {
+    return SendResponse(res, "error", "request already done");
+  }
+
+  let status = "cancel";
+  let remark =  `cancel by client ${loggedUserData.username} (${loggedUserData.name})`
+    let updateRes = {
+      status: status,
+      approverDetails: {
+        name: loggedUserData.name,
+        username: loggedUserData.username,
+        userType: loggedUserData.userType,
+      },
+      approveUserId: loggedUserData.userId,
+      remark: remark,
+    };
+
+  
+   if (status == "cancel") {
+        let parentData = await UserModel.find({ userId: reqData.creatorId });
+        const coins = reqData.amount;
+        const updateCoins = await UpdateUserCoins(
+          coins,
+          reqData.userId,
+          parentData,
+          remark
+        );
+   }
+  
+  
+ 
+    await DepositWithdrawModel.updateOne(
+      { _id: reqData._id },
+      { $set: updateRes }
+    );
+  if (res) {
+    return SendResponse(
+      res,
+      "success",
+      `request initiate successfully for ${reqData.name} (${reqData.username})`
+    );
+  }
+};
+
+
+const notificationListSchema = Joi.object({
+  eventId: Joi.string().trim().required(),
+}).options({
+  abortEarly: true,
+  allowUnknown: true,
+});
+
+const notificationList = async (req, res) => {
+  try {
+    const { error, value } = notificationListSchema.validate(req.body);
+
+    if (error) {
+      return SendResponse(
+        res,
+        "error",
+        "Failed In validation",
+        error.details.map((detail) => detail.message)
+      );
+    }
+
+    const { eventId } = value;
+
+    // Get settings
+    const settingData = await getSettingData();
+
+    const socketUrl = settingData?.socketUrl;
+
+    if (!socketUrl) {
+      return SendResponse(
+        res,
+        "error",
+        "Notification service URL not configured"
+      );
+    }
+
+     const hitUrl = `${socketUrl.replace(/\/+$/, "")}/v2/api/getNotificationList`;
+
+    // Call notification API
+    const response = await axios.post(
+      hitUrl,
+      { eventId },
+      {
+        timeout: 10000,
+      }
+    );
+
+    return SendResponse(
+      res,
+      "success",
+      "",
+      response?.data?.data ?? {}
+    );
+  } catch (error) {
+    _d(
+      {
+        message: error?.message,
+        code: error?.code,
+        status: error?.response?.status,
+        response: error?.response?.data,
+      },
+      "error in notificationList"
+    );
+    return SendResponse(
+      res,
+      "error",
+      "Something went wrong in notificationList"
+    );
+  }
+};
+
 module.exports = {
   createDomain,
   DomainList,
@@ -5800,5 +6010,7 @@ module.exports = {
   getFancyCateogeoryAuditLog,
   validateMultipleFancy,
   userExposureList,
-  userExposureListUpdateBulk
+  userExposureListUpdateBulk,
+  cancelWithdrawReqByclient,
+  notificationList
 };

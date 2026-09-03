@@ -23,10 +23,11 @@ const matkaBetModel = require("../../Models/Matka/MatkaBets.model");
 const internationalCasinoBet = require("../../Models/BetsList/InternationalCasinoBetsList.model");
 
 const { ObjectId } = require("mongodb");
-var requestIp = require("request-ip");
+const requestIp = require("request-ip");
 const Joi = require("joi");
 const { emitToAllActiveUsers , emitToUser } =  require("../../socket.js")
 const BetService = require("../../Services/Sports/Bet.service");
+const { msg } = require("../../Helpers/MessageHelper");
 
 const {
   siteSetting,
@@ -54,22 +55,44 @@ const { getUserIdByUsername } = require("../../Helpers/UsersUtils");
 axios.defaults.timeout = siteSetting.axiosTimeOut;
 
 const oddBetPlaced = async (req, res) => {
+  let betLockKey;
+  let lockToken;
+
   try {
     const t0 = Date.now();
     let bodyData = req.body;
     const loggedUserData = req.loggedInUser;
-    bodyData.loginDetails = loggedUserData
+    bodyData.loginDetails = loggedUserData;
     const userId = loggedUserData.userId;
+
+    // ==========================================
+    // PREVENT SIMULTANEOUS BET PROCESSING
+    // ==========================================
+    betLockKey = `bet:processing:odds:${userId}`;
+    lockToken = `${Date.now()}-${Math.random().toString(36).substring(2)}`;
+
+    const lockAcquired = await client.set(
+      betLockKey,
+      lockToken,
+      "NX",
+      "EX",
+      15
+    );
+
+    if (lockAcquired !== "OK") {
+      return SendResponse(res, "error", msg("bet.betProcessing"));
+    }
+    // ==========================================
     const JoiSchema = Joi.object({
-      marketId: Joi.string().required(),
-      amount: Joi.number().required(),
+      marketId: Joi.string().trim().required(),
+      amount: Joi.number().integer().positive().min(1).required(),
       selectionId: Joi.number().required(),
-      odds: Joi.number().required(),
+      odds: Joi.number().positive().required(),
       run: Joi.number().required(),
       eventId: Joi.number().required(),
       betFor: Joi.string().required(),
       oddsType: Joi.string().required(),
-      type: Joi.string().required(),
+      type: Joi.string().valid("L", "K", "l", "k").required(),
     }).options({ abortEarly: false, allowUnknown: true });
     const { error } = JoiSchema.validate(bodyData);
     if (error) {
@@ -77,40 +100,36 @@ const oddBetPlaced = async (req, res) => {
       return SendResponse(res, "error", "Failed In validation", errorMessages);
     }
 
-    const marketId = bodyData.marketId;
-    bodyData.oddsType = bodyData.oddsType == "Match Odds" ? "matchOdds" : bodyData.oddsType 
-  
+    const marketId = bodyData.marketId.trim();
+    bodyData.oddsType = bodyData.oddsType == "Match Odds" ? "matchOdds" : bodyData.oddsType;
+
     if (loggedUserData.userType !== "client") {
-      return SendResponse(res, "error", "Only client Authorized to place bet");
+      return SendResponse(res, "error", msg("bet.onlyClientAllowed"));
     }
 
-    const [timerCheck, blockedMarketUser , userRateRedis] = await Promise.all([
-     checkLastBetTiming(userId),
+    const [timerCheck, blockedMarketUser, userRateRedis] = await Promise.all([
+      checkLastBetTiming(userId),
       client.sismember(`${marketId}_BlockMarket`, loggedUserData.userId),
-       client.get(
-        `rateDiffrence_${loggedUserData.userId}`
-      ),
+      client.get(`rateDiffrence_${loggedUserData.userId}`),
     ]);
-    
+
     if (!timerCheck) {
-      return SendResponse(res, "error", `we can not accept your bet  due to fast bet under ${process.env.BET_WAITING_TIMER} Sec`);
+      return SendResponse(res, "error", msg("bet.fastBet", { timer: process.env.BET_WAITING_TIMER }));
     }
-  
+
     if (blockedMarketUser) {
-      return SendResponse(res, "error", "Market Is Blocked");
+      return SendResponse(res, "error", msg("bet.marketBlocked"));
     }
-    
-    let userRate  = userRateRedis?userRateRedis:0
 
+    let userRate = userRateRedis ? userRateRedis : 0;
 
-    if(bodyData.isOpenBet && bodyData.isOpenBet==true){
-      let betTransactionAmount = await OpenBetsModel.findOne(
-        { 
-          _id : new ObjectId(bodyData.openBetId),
-        }
-      )
+    if (bodyData.isOpenBet && bodyData.isOpenBet === true) {
+      const betTransactionAmount = await OpenBetsModel.findOne({
+        _id: new ObjectId(bodyData.openBetId),
+        userId: new ObjectId(userId),
+      });
       if (!betTransactionAmount) {
-        return SendResponse(res, "error", "open Bet Not Found");
+        return SendResponse(res, "error", msg("bet.openBetNotFound"));
       }
     }
 
@@ -137,11 +156,7 @@ const oddBetPlaced = async (req, res) => {
     }
     const userData = checkUserData.data;
     if (!userData.betStatus) {
-      return SendResponse(
-        res,
-        "error",
-        "your bet is locked please contact your agent"
-      );
+      return SendResponse(res, "error", msg("bet.betLocked"));
     }
 
 
@@ -199,7 +214,7 @@ const oddBetPlaced = async (req, res) => {
       }
     );
     if (oldMatchBet) {
-      oldMatchBet = mongoToJson(oldMatchBet);
+      // .lean() already returns plain objects — no mongoToJson needed
     }
     let teamData = [];
 
@@ -271,9 +286,9 @@ const oddBetPlaced = async (req, res) => {
     }
 
     
-    var clientIp = requestIp.getClientIp(req);
+    const clientIp = requestIp.getClientIp(req);
 
-    userInfo = {
+    const userInfo = {
       clientCode: userData.username,
       clientName: userData.name,
       creatorName: userData.creatorName,
@@ -334,17 +349,14 @@ const oddBetPlaced = async (req, res) => {
       teamData
     );
 
-    //_d(positionInfo)
+
 
     insertBet.positionInfo = positionInfo;
-
     let oldPosMinAmountarr = Object.values(oldBetPosition);
     let oldPosMinAmount = Math.min(...oldPosMinAmountarr);
     let newPosMinAmountarr = Object.values(newBetPosition);
 
     let newPosMinAmount = Math.min(...newPosMinAmountarr);
-
-
     let newPosMaxAmount = Math.max(...newPosMinAmountarr);
 
     if (newPosMinAmount > 0) {
@@ -394,23 +406,21 @@ const oddBetPlaced = async (req, res) => {
         oldPosMinAmount = oldBetPosition[currentSelection];
         checkAmount = bodyData.amount * bodyData.odds;
       }
-      check = userData.coins + Math.abs(oldPosMinAmount);
+      check = userCoins + Math.abs(oldPosMinAmount);
     }
 
     if (checkAmount > check) {
-      return SendResponse(res, "error", "invalid Amount");
+      return SendResponse(res, "error", msg("bet.invalidAmount"));
     }
-    
-  
 
     const logData = {
       amount: deductAmount,
       forBet: 1,
-      sportId: matchData.sportId  ? matchData.sportId  : 0 ,
+      sportId: matchData.sportId ? matchData.sportId : 0,
       gameName: "sports",
       gameType: oddsType,
       overallType: "bookmakerOdds",
-      remarks: `${oddsType} Odds for (${matchName})`,
+      remarks: msg("statement.betPlacedRemark", { oddsType, matchName }),
     };
 
 
@@ -448,16 +458,15 @@ const oddBetPlaced = async (req, res) => {
     await insertTransactionLog(userData, logData, matchData, shareData);
     const updateCoins = await updateCoinsTbl(userId, userData.userType);
 
-  
-    if(updateCoins.totalCoins < 0 ){
-      const logData = {
+    if (!updateCoins || updateCoins.totalCoins < 0) {
+      const rollbackLogData = {
         amount: -1 * Math.abs(oldPosMinAmount),
         forBet: 1,
-        sportId: matchData.sportId  ? matchData.sportId  : 0 ,
+        sportId: matchData.sportId ? matchData.sportId : 0,
         gameName: "sports",
         gameType: oddsType,
         overallType: "bookmakerOdds",
-        remarks: `${oddsType} Odds for (${matchName})`,
+        remarks: msg("statement.betPlacedRemark", { oddsType, matchName }),
       };
 
       await TransactionLogModel.deleteMany({
@@ -466,17 +475,17 @@ const oddBetPlaced = async (req, res) => {
         overallType: "bookmakerOdds",
         gameType: oddsType,
       });
-      await insertTransactionLog(userData, logData, matchData, shareData);
-      let updateCoinsAgain = await updateCoinsTbl(userId, userData.userType);
+      await insertTransactionLog(userData, rollbackLogData, matchData, shareData);
+      const updateCoinsAgain = await updateCoinsTbl(userId, userData.userType);
       return SendResponse(
         res,
         "error",
-        "invalid Amount",
+        msg("bet.invalidAmount"),
         updateCoinsAgain
       );
-  }
+    }
 
-let operations = [];
+    let operations = [];
 if (teamData?.length) {
     operations = teamData.map((team) => {
       const teamPosition = newBetPosition[team.selection_id] || 0;
@@ -609,147 +618,186 @@ const [insertBetData, marketCoins, BetServicesData ,oddsPositionResult] = await 
     return SendResponse(
       res,
       "success",
-      `${oddsType} Bets Placed Successfully`,
+      msg("bet.oddsSuccess", { oddsType }),
       updateCoins
     );
   } catch (error) {
-    console.log("Something Went Wrong In Odds Bet Place in oddBetPlaced", error);
+    console.error("oddBetPlaced error:", error);
     return SendResponse(
       res,
       "error",
       "Something Went Wrong In Odds Bet Place in oddBetPlaced",
       error
     );
+  } finally {
+    try {
+      if (betLockKey && lockToken) {
+        const currentLock = await client.get(betLockKey);
+        if (currentLock === lockToken) {
+          await client.del(betLockKey);
+        }
+      }
+    } catch (lockError) {
+      console.error("Odds bet lock release error:", lockError);
+    }
   }
 };
 
 const sessionBetPlaced = async (req, res) => {
   let sessionData = [];
-  const loggedUserData = req.loggedInUser;
-  const userId = loggedUserData.userId;
-  const userType = loggedUserData.userType;
-  let bodyData = req.body;
-  const JoiSchema = Joi.object({
-    odds: Joi.number().required(),
-    amount: Joi.number().required(),
-    marketId: Joi.string().required(),
-    selectionId: Joi.required(),
-    run: Joi.number().required(),
-    eventId: Joi.number().required(),
-    betFor: Joi.string().required(),
-    oddsType: Joi.string().required(),
-    type: Joi.string().required(),
-  }).options({ abortEarly: false, allowUnknown: true });
-  const { error } = JoiSchema.validate(bodyData);
-  if (error) {
-    const errorMessages = error.details.map((detail) => detail.message);
-    return SendResponse(res, "error", "Failed In validation", errorMessages);
-  }
+  let betLockKey;
+  let lockToken;
 
   try {
-
-    bodyData.selectionId = bodyData.selectionId + ""
-
-    if (userType !== "client") {
-      return SendResponse(res, "error", "Only client Authorised To Place Bet");
+    const loggedUserData = req.loggedInUser;
+    const userId = loggedUserData.userId;
+    const userType = loggedUserData.userType;
+    let bodyData = req.body;
+    const JoiSchema = Joi.object({
+      odds: Joi.number().positive().required(),
+      amount: Joi.number().integer().positive().min(1).required(),
+      marketId: Joi.string().trim().required(),
+      selectionId: Joi.required(),
+      run: Joi.number().required(),
+      eventId: Joi.number().required(),
+      betFor: Joi.string().required(),
+      oddsType: Joi.string().required(),
+      type: Joi.string().valid("Y", "N", "y", "n").required(),
+    }).options({ abortEarly: false, allowUnknown: true });
+    const { error } = JoiSchema.validate(bodyData);
+    if (error) {
+      const errorMessages = error.details.map((detail) => detail.message);
+      return SendResponse(res, "error", "Failed In validation", errorMessages);
     }
 
-    let timerCheck = await checkLastBetTiming(userId);
-    if (!timerCheck) {
-      return SendResponse(res, "error", "odds expired");
+    bodyData.selectionId = bodyData.selectionId + "";
+    const betRateKey = `bet:rate:${userId}`;
+
+    const betAllowed = await client.set(
+    betRateKey,
+    "1",
+    "NX",
+    "EX",
+    1
+  );
+
+  if (betAllowed !== "OK") {
+    return SendResponse(res, "error", msg("bet.rateLimited"));
+  }
+
+  // ==========================================
+  // PREVENT SIMULTANEOUS BET PROCESSING
+  // ==========================================
+   betLockKey = `bet:processing:${userId}`;
+
+   lockToken = `${Date.now()}-${Math.random()
+    .toString(36)
+    .substring(2)}`;
+
+  const lockAcquired = await client.set(
+    betLockKey,
+    lockToken,
+    "NX",
+    "EX",
+    15
+  );
+
+  if (lockAcquired !== "OK") {
+    return SendResponse(res, "error", msg("bet.betProcessing"));
+  }
+  // ==========================================
+  // REST OF YOUR BET CODE
+  // ========================================== 
+
+    if (userType !== "client") {
+      return SendResponse(res, "error", msg("bet.onlyClientAllowed"));
     }
 
     const marketId = bodyData.marketId;
 
-    if (siteSetting.IS_REDIS) {
-      let blockedMarketUser = await client.sismember(
-        `${marketId}_BlockMarket`,
-        loggedUserData.userId
-      );
-      if (blockedMarketUser) {
-        return SendResponse(res, "error", "Market Is Blocked");
-      }
+    // ============================================================
+    // PARALLEL: timerCheck + blockedMarket + liveOdds — all independent
+    // ============================================================
+    const [timerCheck, blockedMarketUser, checkOdds] = await Promise.all([
+      checkLastBetTiming(userId),
+      siteSetting.IS_REDIS ? client.sismember(`${marketId}_BlockMarket`, loggedUserData.userId) : Promise.resolve(false),
+      BetService.checkLiveMatchOdds(bodyData),
+    ]);
+
+    if (!timerCheck) {
+      return SendResponse(res, "error", msg("bet.oddsExpired"));
     }
-
-    const checkOdds = await BetService.checkLiveMatchOdds(bodyData);
-
+    if (blockedMarketUser) {
+      return SendResponse(res, "error", msg("bet.marketBlocked"));
+    }
     if (checkOdds.status == "error") {
       return SendResponse(res, "error", checkOdds.message);
     }
 
-    let settingData = checkOdds?.data?.settingData
-
+    const matchSettingData = checkOdds?.data?.settingData;
     const startTime = Date.now();
 
     sessionData = checkOdds.data.liveOdds;
 
-
-
-
-   
-
-    const selectionId = bodyData.selectionId
+    const selectionId = bodyData.selectionId;
     const type = bodyData.type;
     const matchData = checkOdds.data.matchData;
     const odds = bodyData.odds;
     const amount = bodyData.amount;
 
-    bodyData.run = type == "Y" ? (sessionData.runsYes ?sessionData.runsYes : bodyData.run ) : (sessionData.runsNo ?sessionData.runsNo : bodyData.run )
+    bodyData.run = type == "Y" ? (sessionData.runsYes ? sessionData.runsYes : bodyData.run) : (sessionData.runsNo ? sessionData.runsNo : bodyData.run);
 
     const run = bodyData.run;
 
-
-    let fancyType = "Normal"
-    if (settingData && settingData.fancyType && settingData.fancyType != "Normal") {
-      fancyType = settingData.fancyType
+    let fancyType = "Normal";
+    if (matchSettingData && matchSettingData.fancyType && matchSettingData.fancyType != "Normal") {
+      fancyType = matchSettingData.fancyType;
     }
 
     if (fancyType != "Normal") {
       return SendResponse(res, "error", "Only Normal Type fancy allowed to Bet place");
     }
 
-    let checkUserData = await BetService.checkUserData(userId, bodyData);
+    // ============================================================
+    // PARALLEL: checkUserData + checkPlayData — independent
+    // ============================================================
+    let [checkUserData, checkPlayData] = await Promise.all([
+      BetService.checkUserData(userId, bodyData),
+      BetService.checkPlayDataMarketWise({ _id: userId, userId: userId }, marketId, "fancy"),
+    ]);
+
     if (checkUserData.status == "error") {
-      return SendResponse(res, "error", checkOdds.message);
+      return SendResponse(res, "error", checkUserData.message);
     }
     const userData = checkUserData.data;
-    let oldSessionBetData = {};
-    let checkPlayData = {};
-    let directUserShareData = {}
+    let directUserShareData = {};
 
     if (!userData.betStatus) {
-      return SendResponse(
-        res,
-        "error",
-        "your bet is locked please contact your agent"
-      );
+      return SendResponse(res, "error", msg("bet.betLocked"));
     }
 
-    checkPlayData = await BetService.checkPlayDataMarketWise(
-      userData,
-      marketId,
-      "fancy"
-    );
-
+    // Re-fetch playData with full userData if first call used minimal data
+    if (!checkPlayData || !checkPlayData.shareData) {
+      checkPlayData = await BetService.checkPlayDataMarketWise(userData, marketId, "fancy");
+    }
 
     if (checkPlayData?.directUserShareData) {
-      directUserShareData = checkPlayData?.directUserShareData
+      directUserShareData = checkPlayData?.directUserShareData;
     }
 
-    const shareData = JSON.parse(checkPlayData.shareData);
+    const shareData = checkPlayData.shareData ? JSON.parse(checkPlayData.shareData) : {};
 
-    oldSessionBetData = [];
-
-    let sessionDatabase = await FancyBetModel.find({
+    // ============================================================
+    // PARALLEL: old session bets — fetch while we already have userData
+    // ============================================================
+    const sessionDatabase = await FancyBetModel.find({
       userId: userData.userId,
       marketId: marketId.trim(),
       selectionId: selectionId,
       isDeleted: 0,
-    });
+    }).lean();
 
-    if (sessionDatabase) {
-      oldSessionBetData = mongoToJson(sessionDatabase);
-    }
+    let oldSessionBetData = sessionDatabase ? sessionDatabase : [];
 
     let profit = 0;
     let loss = 0;
@@ -768,8 +816,8 @@ const sessionBetPlaced = async (req, res) => {
 
 
 
-    var clientIp = requestIp.getClientIp(req);
-    userInfo = {
+    const clientIp = requestIp.getClientIp(req);
+    const userInfo = {
       clientCode: userData.username,
       clientName: userData.name,
       creatorName: userData.creatorName,
@@ -780,7 +828,7 @@ const sessionBetPlaced = async (req, res) => {
       isComm = 0;
     }
 
-    let insertFancyBet = {
+    const insertFancyBet = {
       marketId: marketId.trim(),
       profit: profit,
       loss: loss,
@@ -804,7 +852,7 @@ const sessionBetPlaced = async (req, res) => {
       userInfo: userInfo,
       ip: clientIp,
       isComm: isComm,
-      gtype : gtype
+      gtype: gtype,
     };
 
     if (shareData) {
@@ -853,26 +901,21 @@ const sessionBetPlaced = async (req, res) => {
       newPositionAmount = Math.min(...values);
     }
 
-    let oldPositionAmountData = await getSessionPositionByTransaction(
-      userData,
-      selectionId,
-      marketId
-    );
-
-
-    const oldPositionAmount = oldPositionAmountData;
-
+    // ============================================================
+    // PARALLEL: oldPosition + realCoins — both are DB aggregations, independent
+    // ============================================================
+    const [oldPositionAmount, realUserCoins] = await Promise.all([
+      getSessionPositionByTransaction(userData, selectionId, marketId),
+      getUserCoinsByTransactionTable(userData._id),
+    ]);
 
     let coins = userData.coins;
-    
-    let realUserCoins = await getUserCoinsByTransactionTable(userData._id)
-
-    if(realUserCoins && realUserCoins.totalCoins){
-      coins = realUserCoins.totalCoins
+    if (realUserCoins && realUserCoins.totalCoins) {
+      coins = realUserCoins.totalCoins;
     }
 
     if (Math.abs(newPositionAmount) > Math.abs(oldPositionAmount) + coins) {
-      return SendResponse(res, "error", "Invalid Fancy Amount");
+      return SendResponse(res, "error", msg("bet.invalidFancyAmount"));
     }
 
     
@@ -880,7 +923,7 @@ const sessionBetPlaced = async (req, res) => {
     let executionTime = endTime - startTime; // Calculate the execution time in milliseconds
 
     if (executionTime > 4000) {
-      return SendResponse(res, "error", "execution SendResponse time out");
+      return SendResponse(res, "error", msg("bet.executionTimeout"));
     }
 
 
@@ -907,30 +950,29 @@ const sessionBetPlaced = async (req, res) => {
 
     try {
         if (directUserShareData && directUserShareData != null) {
-          newPositionAmount = -1 * newPositionAmount
-          directUserShareData = JSON.parse(directUserShareData)
+          const invertedPosition = -1 * newPositionAmount;
+          directUserShareData = JSON.parse(directUserShareData);
           if (directUserShareData) {
             directUserShareData.map((data) => {
               logData[`${data?.creatorUserType}ShareAmount`] = Math.round(
-                data[`${data?.creatorUserType}ProfitLossrMatchShare`] * newPositionAmount /100
-            );
-            })
+                data[`${data?.creatorUserType}ProfitLossrMatchShare`] * invertedPosition / 100
+              );
+            });
           }
         }
     } catch (e) {
-      console.log(e, "problem with directShare in bookmaker place bets")
+      console.error(e, "problem with directShare in session place bets");
     }
-  
 
     await insertTransactionLog(userData, logData, matchData, shareData);
 
-    let updateCoins = await updateCoinsTbl(userId, userData.userType);
+    const updateCoins = await updateCoinsTbl(userId, userData.userType);
 
-    if(updateCoins.totalCoins < 0 ){
-      const logData = {
-        amount:  oldPositionAmount,
+    if (!updateCoins || updateCoins.totalCoins < 0) {
+      const rollbackLogData = {
+        amount: oldPositionAmount,
         forBet: 1,
-        sportId: matchData.sportId  ? matchData.sportId  : 0 ,
+        sportId: matchData.sportId ? matchData.sportId : 0,
         gameName: "sports",
         gameType: "fancyOdds",
         overallType: "fancyOdds",
@@ -945,8 +987,8 @@ const sessionBetPlaced = async (req, res) => {
         overallType: "fancyOdds",
         selectionId: selectionId,
       });
-      await insertTransactionLog(userData, logData, matchData, shareData);
-      let updateCoinsAgain = await updateCoinsTbl(userId, userData.userType);
+      await insertTransactionLog(userData, rollbackLogData, matchData, shareData);
+      const updateCoinsAgain = await updateCoinsTbl(userId, userData.userType);
       return SendResponse(
         res,
         "error",
@@ -955,53 +997,56 @@ const sessionBetPlaced = async (req, res) => {
       );
     }
 
-    if (siteSetting.IS_REDIS) {
-      await client.del(`${userData.userId}_${marketId}_POS`);
-    }
-
-
-    await FancyBetModel.create(insertFancyBet);
-
     const timestamp = Date.now();
-    await client.set(`lastBetTimeUser__${userId}`, timestamp);
-    await client.del(`${userData.userId}_fancyData_${marketId}`);
 
+    const postBetPromises = [
+      FancyBetModel.create(insertFancyBet),
+      client.set(`lastBetTimeUser__${userId}`, timestamp),
+      client.del(`${userData.userId}_fancyData_${marketId}`),
+    ];
 
-
-   // _d(directUserShareData, "directUserShareData")
-    
-    try {
-      if (directUserShareData) {
-        await Promise.allSettled(
-          directUserShareData.map((data) =>
-
-            
-            emitToUser(
-              "betUpdate",
-              JSON.stringify(insertFancyBet),
-              data?.userUserId
-            )
-          )
-        );
-      }
+    if (siteSetting.IS_REDIS) {
+      postBetPromises.push(client.del(`${userData.userId}_${marketId}_POS`));
     }
-     catch (e) {
-      console.log(
-        e,
-        "problem with through socket for updating bet in admin panels"
-      );
+
+    await Promise.all(postBetPromises);
+
+    // Socket emit — non-blocking (don't wait for it)
+    if (directUserShareData) {
+      setImmediate(() => {
+        try {
+          if (Array.isArray(directUserShareData)) {
+            directUserShareData.forEach((data) =>
+              emitToUser("betUpdate", JSON.stringify(insertFancyBet), data?.userUserId)
+            );
+          }
+        } catch (e) {
+          console.error(e, "problem with socket for updating bet in admin panels");
+        }
+      });
     }
 
     return SendResponse(
       res,
       "success",
-      "Session Bet Placed Successfully",
+      msg("bet.sessionSuccess"),
       updateCoins
     );
   } catch (error) {
-    console.log(error);
+    console.error("sessionBetPlaced error:", error);
     return SendResponse(res, "error", "SessionBet Place Error", error);
+  }finally {
+    try {
+  
+    const currentLock = await client.get(betLockKey);
+
+    if (currentLock === lockToken) {
+      await client.del(betLockKey);
+    }
+  } catch (lockError) {
+    console.log("Bet lock release error:", lockError);
   }
+}
 };
 
 const matchList = async (req, res) => {
@@ -1086,7 +1131,7 @@ const matchList = async (req, res) => {
 const sportByMarketId = async (req, res) => {
   const bodyData = req.body;
   const marketId = bodyData.marketId;
-  matchData = await BetService.sportByMarketId(marketId);
+  const matchData = await BetService.sportByMarketId(marketId);
   return SendResponse(
     res,
     "success",
@@ -1190,7 +1235,10 @@ const betsList = async (req, res) => {
     }
 
     // apply access rules
-    where = await whereHelper(loggedInData, where);
+    if (loggedInData.userType != "staff") {
+       where = await whereHelper(loggedInData, where);
+    }
+  
 
     // downline override filter
     if (bodyData.downlineUserId && bodyData.downlineUserType) {
@@ -1214,8 +1262,11 @@ const betsList = async (req, res) => {
     }
 
     // final where object
-    const whereObj = await whereHelper(loggedInData, where);
-
+    let whereObj = where
+     if (loggedInData.userType != "staff") {
+       whereObj = await whereHelper(loggedInData, where);
+     }
+    
     // marketId parsing logic
     if (bodyData.marketId) {
       const stringMarketId = String(marketId);
@@ -1625,7 +1676,7 @@ const betMatchDetails = async (req, res) => {
           marketId: marketId.trim(),
           isDeleted: 0,
         };
-        oddsBetData = await BetService.getOddsBetList(
+        const oddsBetData = await BetService.getOddsBetList(
           matchWhere,
           "amount , selectionId ,  odds , type , profit , loss , teamName , createdAt , oddsType"
         );
@@ -1645,7 +1696,7 @@ const betMatchDetails = async (req, res) => {
           marketId: marketId.trim(),
           isDeleted: 0,
         };
-        sessionBetData = await BetService.getFancyBetList(
+        const sessionBetData = await BetService.getFancyBetList(
           sessionWhere,
           "amount , selectionId , loss , profit , isComm , decisionRun , sessionName , isDeclare , createdAt , type , run , odds"
         );
@@ -1664,6 +1715,7 @@ const betMatchDetails = async (req, res) => {
     }
 
     let teamData = [];
+    let matchData = {};
     const inplayMatchData = await BetService.getMatchList();
 
     if (inplayMatchData) {
@@ -1734,7 +1786,7 @@ const inplayOddsPosition = async (req, res) => {
     let finalList = {};
     const finalReturnOddsData = await Promise.all(
       matchList.map(async (data) => {
-        let marketId = data.marketId;p
+        let marketId = data.marketId;
         let teamData = JSON.parse(data.teamData);
         let returnPositionData = await BetService.getOddsPosition(
           loggedInData,
@@ -1866,13 +1918,22 @@ const casinoSearchResult = async (req, res) => {
 
 const getSessionList = async (req, res) => {
   try {
+    let bodyData = req.body
     let marketId = req.query.marketId;
     if (req.body.marketId) {
       marketId = req.body.marketId;
     }
     const loggedInData = req.loggedInUser;
     loggedInData.userId = new ObjectId(loggedInData.userId);
-    let where = whereHelper(loggedInData, { marketId: marketId });
+    let where =  { marketId: marketId }
+    if (loggedInData.userType != "staff") {
+      where = whereHelper(loggedInData,where);
+    }
+
+    if (bodyData.isDeclare) {
+      where.isDeclare = 1
+    }
+    
     const SessionList = await BetService.getSessionList(where);
     return SendResponse(res, "success", "fetch Data", SessionList);
   } catch (error) {
@@ -1991,7 +2052,7 @@ const completedFancyByMarketId = async (req, res) => {
     groupCond.selfProfitLoss = sessionProfitLoss;
 
     where.overallType = "fancyOdds";
-    var sessionData = await TransactionLogModel.aggregate([
+    const sessionData = await TransactionLogModel.aggregate([
       {
         $match: where,
       },
@@ -2005,7 +2066,7 @@ const completedFancyByMarketId = async (req, res) => {
       },
     ]);
 
-    var declareRunData = await FancyBetModel.aggregate([
+    let declareRunData = await FancyBetModel.aggregate([
       {
         $match: {
           marketId: marketId.trim(),
@@ -2176,7 +2237,7 @@ const getAllSessionList = async (req, res) => {
   const loginData = req.loggedInUser;
   let userWhere = whereHelper(loginData, { marketId: bodyData.marketId });
   try {
-    var resData = await FancyBetModel.aggregate([
+    const resData = await FancyBetModel.aggregate([
       {
         $match: userWhere,
       },
@@ -2196,8 +2257,8 @@ const getAllSessionList = async (req, res) => {
     ]);
     return SendResponse(res, "success", "dataFetched", resData);
   } catch (error) {
-    console.log("Session List Fetching Error", error);
-    return error;
+    console.error("Session List Fetching Error", error);
+    return SendResponse(res, "error", "Session List Fetching Error", error);
   }
 };
 
@@ -2245,8 +2306,9 @@ const deleteMarket = async (req, res) => {
 
   await saveSportsList(req);
   return SendResponse(res, "success", "market has been deleted successfully");
-  }catch(error){
-    console.log(error , "error in delete market")
+  } catch (error) {
+    console.error("deleteMarket error:", error);
+    return SendResponse(res, "error", "Failed to delete market", error);
   }
   
 };
@@ -2322,33 +2384,54 @@ const marketReload = async (req, res) => {
 
 const meterKhadoOddEvenCricketCassinoBetPlace = async (req, res) => {
   let sessionData = [];
-  const loggedUserData = req.loggedInUser;
-  const userId = loggedUserData.userId;
-  const userType = loggedUserData.userType;
-  let bodyData = req.body;
-  const JoiSchema = Joi.object({
-    odds: Joi.number().required(),
-    amount: Joi.number().required(),
-    marketId: Joi.string().required(),
-    selectionId: Joi.required(),
-    run: Joi.number().required(),
-    eventId: Joi.number().required(),
-    fancyType: Joi.string().required(),
-    type: Joi.string().required(),
-  }).options({ abortEarly: false, allowUnknown: true });
-  const { error } = JoiSchema.validate(bodyData);
-  if (error) {
-    const errorMessages = error.details.map((detail) => detail.message);
-    return SendResponse(res, "error", "Failed In validation", errorMessages);
-  }
+  let betLockKey;
+  let lockToken;
 
   try {
+    const loggedUserData = req.loggedInUser;
+    const userId = loggedUserData.userId;
+    const userType = loggedUserData.userType;
+    let bodyData = req.body;
+    const JoiSchema = Joi.object({
+      odds: Joi.number().positive().required(),
+      amount: Joi.number().integer().positive().min(1).required(),
+      marketId: Joi.string().trim().required(),
+      selectionId: Joi.required(),
+      run: Joi.number().required(),
+      eventId: Joi.number().required(),
+      fancyType: Joi.string().required(),
+      type: Joi.string().valid("Y", "N", "y", "n").required(),
+    }).options({ abortEarly: false, allowUnknown: true });
+    const { error } = JoiSchema.validate(bodyData);
+    if (error) {
+      const errorMessages = error.details.map((detail) => detail.message);
+      return SendResponse(res, "error", "Failed In validation", errorMessages);
+    }
+
+    // ==========================================
+    // PREVENT SIMULTANEOUS BET PROCESSING
+    // ==========================================
+    betLockKey = `bet:processing:meter:${userId}`;
+    lockToken = `${Date.now()}-${Math.random().toString(36).substring(2)}`;
+
+    const lockAcquired = await client.set(
+      betLockKey,
+      lockToken,
+      "NX",
+      "EX",
+      15
+    );
+
+    if (lockAcquired !== "OK") {
+      return SendResponse(res, "error", msg("bet.betProcessing"));
+    }
+    // ==========================================
     if (userType !== "client") {
-      return SendResponse(res, "error", "Only client Authorised To Place Bet");
+      return SendResponse(res, "error", msg("bet.onlyClientAllowed"));
     }
     let timerCheck = await checkLastBetTiming(userId);
     if (!timerCheck) {
-      return SendResponse(res, "error", "odds expired");
+      return SendResponse(res, "error", msg("bet.oddsExpired"));
     }
     const marketId = bodyData.marketId;
     if (siteSetting.IS_REDIS) {
@@ -2357,7 +2440,7 @@ const meterKhadoOddEvenCricketCassinoBetPlace = async (req, res) => {
         loggedUserData.userId
       );
       if (blockedMarketUser) {
-        return SendResponse(res, "error", "Market Is Blocked");
+        return SendResponse(res, "error", msg("bet.marketBlocked"));
       }
     }
 
@@ -2383,19 +2466,15 @@ const meterKhadoOddEvenCricketCassinoBetPlace = async (req, res) => {
 
     let checkUserData = await BetService.checkUserData(userId, bodyData);
     if (checkUserData.status == "error") {
-      return SendResponse(res, "error", checkOdds.message);
+      return SendResponse(res, "error", checkUserData.message);
     }
     const userData = checkUserData.data;
     let oldSessionBetData = {};
     let checkPlayData = {};
-    let directUserShareData = {};
+    let directUserShareData = {};;
 
     if (!userData.betStatus) {
-      return SendResponse(
-        res,
-        "error",
-        "your bet is locked please contact your agent"
-      );
+      return SendResponse(res, "error", msg("bet.betLocked"));
     }
 
     checkPlayData = await BetService.checkPlayDataMarketWise(
@@ -2404,17 +2483,16 @@ const meterKhadoOddEvenCricketCassinoBetPlace = async (req, res) => {
       "fancy"
     );
 
-    const shareData = JSON.parse(checkPlayData.shareData);
+    const shareData = checkPlayData.shareData ? JSON.parse(checkPlayData.shareData) : {};
 
-
-     if (checkPlayData?.directUserShareData) {
-      directUserShareData = checkPlayData?.directUserShareData
+    if (checkPlayData?.directUserShareData) {
+      directUserShareData = checkPlayData?.directUserShareData;
      }
     
     let profit = 0;
     let loss = 0;
-    var clientIp = requestIp.getClientIp(req);
-    userInfo = {
+    const clientIp = requestIp.getClientIp(req);
+    const userInfo = {
       clientCode: userData.username,
       clientName: userData.name,
       creatorName: userData.creatorName,
@@ -2557,14 +2635,14 @@ const meterKhadoOddEvenCricketCassinoBetPlace = async (req, res) => {
     }
 
     if (Math.abs(deductAmount) >  coins) {
-      return SendResponse(res, "error", `Invalid ${fancyType} Amount For ${sessionData.session_name}`);
+      return SendResponse(res, "error", msg("bet.invalidFancyTypeAmount", { fancyType, sessionName: sessionData.session_name }));
     }
     
     const endTime = Date.now();
     const executionTime = endTime - startTime; 
 
     if (executionTime > 4000) {
-      return SendResponse(res, "error", "execution SendResponse time out");
+      return SendResponse(res, "error", msg("bet.executionTimeout"));
     }
 
 
@@ -2580,65 +2658,24 @@ const meterKhadoOddEvenCricketCassinoBetPlace = async (req, res) => {
     };
 
 
-       try {
-        if (directUserShareData && directUserShareData != null) {
-          newPositionAmount = -1 * newPositionAmount
-          directUserShareData = JSON.parse(directUserShareData)
-          if (directUserShareData) {
-            directUserShareData.map((data) => {
-              logData[`${data?.creatorUserType}ShareAmount`] = Math.round(
-                data[`${data?.creatorUserType}ProfitLossrMatchShare`] * newPositionAmount /100
+    try {
+      if (directUserShareData && directUserShareData != null) {
+        const invertedAmount = -1 * deductAmount;
+        directUserShareData = JSON.parse(directUserShareData);
+        if (directUserShareData) {
+          directUserShareData.map((data) => {
+            logData[`${data?.creatorUserType}ShareAmount`] = Math.round(
+              data[`${data?.creatorUserType}ProfitLossrMatchShare`] * invertedAmount / 100
             );
-            })
-          }
+          });
         }
-       } catch (e) {
-         
-        
-      console.log(e, "problem with directShare in bookmaker place bets")
+      }
+    } catch (e) {
+      console.error(e, "problem with directShare in meter/khado place bets");
     }
-    
-    
-
-    // if(shareData){
-    //  let newPositionAmount = -1 * profit
-
-    //   logData["ownerShareAmount"] = Math.round(
-    //     shareData.ownerMatchProfitLossShare * newPositionAmount
-    //   );
-  
-    //   logData["subownerShareAmount"] = Math.round(
-    //     shareData.subownerMatchProfitLossShare * newPositionAmount
-    //   );
-  
-    //   logData["superadminShareAmount"] = Math.round(
-    //     shareData.superadminMatchProfitLossShare * newPositionAmount
-    //   );
-  
-    //   logData["adminShareAmount"] = Math.round(
-    //     shareData.adminMatchProfitLossShare * newPositionAmount
-    //   );
-  
-    //   logData["subadminShareAmount"] = Math.round(
-    //     shareData.subadminMatchProfitLossShare * newPositionAmount
-    //   );
-  
-    //   logData["masterShareAmount"] = Math.round(
-    //     shareData.masterMatchProfitLossShare * newPositionAmount
-    //   );
-  
-    //   logData["superagentShareAmount"] = Math.round(
-    //     shareData.superagentMatchProfitLossShare * newPositionAmount
-    //   );
-  
-    //   logData["agentShareAmount"] = Math.round(
-    //     shareData.agentMatchProfitLossShare * newPositionAmount
-    //   );
-
-    // }
 
     await insertTransactionLog(userData, logData, matchData, shareData);
-    let updateCoins = await updateCoinsTbl(userId, userData.userType);
+    const updateCoins = await updateCoinsTbl(userId, userData.userType);
 
     if (siteSetting.IS_REDIS) {
       await client.del(`${userData.userId}_${marketId}_POS`);
@@ -2674,15 +2711,25 @@ const meterKhadoOddEvenCricketCassinoBetPlace = async (req, res) => {
     return SendResponse(
       res,
       "success",
-      "Session Bet Placed Successfully",
+      msg("bet.sessionSuccess"),
       updateCoins
     );
   } catch (error) {
-    console.log(error);
+    console.error("meterKhadoBetPlace error:", error);
     return SendResponse(res, "error", "SessionBet Place Error", error);
+  } finally {
+    try {
+      if (betLockKey && lockToken) {
+        const currentLock = await client.get(betLockKey);
+        if (currentLock === lockToken) {
+          await client.del(betLockKey);
+        }
+      }
+    } catch (lockError) {
+      console.error("Meter bet lock release error:", lockError);
+    }
   }
 };
-
 
 const getOpenBetsBymarketId = async (req,res)=>{
   try {
@@ -2703,36 +2750,40 @@ const getOpenBetsBymarketId = async (req,res)=>{
       await client.set(redisKey , JSON.stringify(openBetsData))
       await client.expire(redisKey , 60 * 60 * 24)
     }
-    return SendResponse(res,"success", `data get successfully`, openBetsData);
-  } catch (error) {}
+    return SendResponse(res, "success", "data get successfully", openBetsData);
+  } catch (error) {
+    console.error("getOpenBetsBymarketId error:", error);
+    return SendResponse(res, "error", "Failed to fetch open bets", error);
+  }
+};
 
-}
 
-
-const cancelOpenBets = async (req,res)=>{
+const cancelOpenBets = async (req, res) => {
   try {
-    let bodyData = req.body;
-    let loggedInData = req.loggedInUser;
-    let userId = loggedInData.userId;
-    let betIdArray = bodyData.betIdArray;
-    let marketId = bodyData.marketId
-    let redisKey = `${userId}_openBets_${marketId}`
-   
-   await Promise.all([
-    OpenBetsModel.deleteMany({
-      _id : betIdArray,
-      marketId : marketId
-    }),
+    const bodyData = req.body;
+    const loggedInData = req.loggedInUser;
+    const userId = loggedInData.userId;
+    const betIdArray = bodyData.betIdArray;
+    const marketId = bodyData.marketId;
+    const redisKey = `${userId}_openBets_${marketId}`;
 
-    TransactionLogModel.deleteMany({
-      marketId : marketId,
-      userId : userId,
-     // betId : betIdArray,
-      overallType : "openBet",
-      forBet: 1
-    }),
-    
-   ])
+    if (!betIdArray || !marketId) {
+      return SendResponse(res, "error", "betIdArray and marketId are required");
+    }
+
+    await Promise.all([
+      OpenBetsModel.deleteMany({
+        _id: { $in: betIdArray },
+        userId: userId,
+        marketId: marketId,
+      }),
+      TransactionLogModel.deleteMany({
+        marketId: marketId,
+        userId: userId,
+        overallType: "openBet",
+        forBet: 1,
+      }),
+    ]);
 
 
    let newPos  = await BetService.getNewOpenBetsPosition(userId, marketId)
@@ -2750,55 +2801,30 @@ const cancelOpenBets = async (req,res)=>{
     await updateCoinsTbl(userId, loggedInData.userType);
     await client.del(redisKey)
 
-    return SendResponse(res,"success", `open bets gets cacelled successfully`);
+    return SendResponse(res, "success", "open bets cancelled successfully");
   } catch (error) {
-    console.log(error)
+    console.error("cancelOpenBets error:", error);
+    return SendResponse(res, "error", "Failed to cancel open bets", error);
   }
-
-}
+};
 
 
 const combinedBetFairBetAccept = async (req, res) => {
-    const t0 = Date.now();
-    let bodyData = req.body;
-    const loggedUserData = req.loggedInUser;
-    bodyData.loginDetails = loggedUserData
-    const userId = loggedUserData.userId;
-    const JoiSchema = Joi.object({
-      marketId: Joi.string().required(),
-      amount: Joi.number().required(),
-      selectionId: Joi.number().required(),
-      odds: Joi.number().required(),
-      run: Joi.number().required(),
-      eventId: Joi.number().required(),
-      betFor: Joi.string().required(),
-      oddsType: Joi.string().required(),
-      type: Joi.string().required(),
-    }).options({ abortEarly: false, allowUnknown: true });
-    const { error } = JoiSchema.validate(bodyData);
-    if (error) {
-      const errorMessages = error.details.map((detail) => detail.message);
-      return SendResponse(res, "error", "Failed In validation", errorMessages);
-    }
-}
-
-
-const combinedBetPlaceOdds = async (req, res) => {
   try {
-    const t0 = Date.now();
     let bodyData = req.body;
     const loggedUserData = req.loggedInUser;
-    bodyData.loginDetails = loggedUserData
+    bodyData.loginDetails = loggedUserData;
     const userId = loggedUserData.userId;
     const JoiSchema = Joi.object({
-      marketId: Joi.string().required(),
-      amount: Joi.number().required(),
-      odds: Joi.number().required(),
+      marketId: Joi.string().trim().required(),
+      amount: Joi.number().integer().positive().min(1).required(),
+      selectionId: Joi.number().required(),
+      odds: Joi.number().positive().required(),
       run: Joi.number().required(),
       eventId: Joi.number().required(),
       betFor: Joi.string().required(),
       oddsType: Joi.string().required(),
-      type: Joi.string().required(),
+      type: Joi.string().valid("L", "K", "l", "k").required(),
     }).options({ abortEarly: false, allowUnknown: true });
     const { error } = JoiSchema.validate(bodyData);
     if (error) {
@@ -2810,7 +2836,64 @@ const combinedBetPlaceOdds = async (req, res) => {
       return SendResponse(res, "error", "Only client Authorized to place bet");
     }
 
-    const marketId = bodyData.marketId;
+    return SendResponse(res, "success", "Validation passed");
+  } catch (error) {
+    console.error("combinedBetFairBetAccept error:", error);
+    return SendResponse(res, "error", "Something went wrong", error);
+  }
+};
+
+
+const combinedBetPlaceOdds = async (req, res) => {
+  let betLockKey;
+  let lockToken;
+
+  try {
+    const t0 = Date.now();
+    let bodyData = req.body;
+    const loggedUserData = req.loggedInUser;
+    bodyData.loginDetails = loggedUserData;
+    const userId = loggedUserData.userId;
+    const JoiSchema = Joi.object({
+      marketId: Joi.string().trim().required(),
+      amount: Joi.number().integer().positive().min(1).required(),
+      odds: Joi.number().positive().required(),
+      run: Joi.number().required(),
+      eventId: Joi.number().required(),
+      betFor: Joi.string().required(),
+      oddsType: Joi.string().required(),
+      type: Joi.string().valid("L", "K", "l", "k").required(),
+    }).options({ abortEarly: false, allowUnknown: true });
+    const { error } = JoiSchema.validate(bodyData);
+    if (error) {
+      const errorMessages = error.details.map((detail) => detail.message);
+      return SendResponse(res, "error", "Failed In validation", errorMessages);
+    }
+
+    if (loggedUserData.userType !== "client") {
+      return SendResponse(res, "error", msg("bet.onlyClientAllowed"));
+    }
+
+    // ==========================================
+    // PREVENT SIMULTANEOUS BET PROCESSING
+    // ==========================================
+    betLockKey = `bet:processing:combined:${userId}`;
+    lockToken = `${Date.now()}-${Math.random().toString(36).substring(2)}`;
+
+    const lockAcquired = await client.set(
+      betLockKey,
+      lockToken,
+      "NX",
+      "EX",
+      15
+    );
+
+    if (lockAcquired !== "OK") {
+      return SendResponse(res, "error", msg("bet.betProcessing"));
+    }
+    // ==========================================
+
+    const marketId = bodyData.marketId.trim();
     const [timerCheck, blockedMarketUser , userRateRedis] = await Promise.all([
      checkLastBetTiming(userId),
       client.sismember(`${marketId}_BlockMarket`, loggedUserData.userId),
@@ -2820,28 +2903,28 @@ const combinedBetPlaceOdds = async (req, res) => {
     ]);
     
     if (!timerCheck) {
-      return SendResponse(res, "error", "odds expired");
+      return SendResponse(res, "error", msg("bet.oddsExpired"));
     }
-  
+
     if (blockedMarketUser) {
-      return SendResponse(res, "error", "Market Is Blocked");
+      return SendResponse(res, "error", msg("bet.marketBlocked"));
     }
 
-    let betType = bodyData.type
-    let amount = bodyData.amount
+    let betType = bodyData.type;
+    let amount = bodyData.amount;
 
-    let userRate  = userRateRedis?userRateRedis:0
+    let userRate = userRateRedis ? userRateRedis : 0;
     let checkOdds = await BetService.checkLiveMatchOdds(bodyData, userRate, true);
-    let matchData = checkOdds.matchData
-    let settingData = checkOdds.settingData
-    let oddsData = checkOdds?.oddsData[0] ? checkOdds?.oddsData[0] : []
+    let matchData = checkOdds.matchData;
+    let settingData = checkOdds.settingData;
+    let oddsData = checkOdds?.oddsData[0] ? checkOdds?.oddsData[0] : [];
 
-     if (!oddsData || oddsData?.status != "OPEN") {
-      return SendResponse(res, "error", "Market Is Closed");
-     }
-    
+    if (!oddsData || oddsData?.status != "OPEN") {
+      return SendResponse(res, "error", msg("bet.marketClosed"));
+    }
+
     if (amount < 1000) {
-      return SendResponse(res, "error", "Min Size Is 1000");
+      return SendResponse(res, "error", msg("bet.minSize", { minSize: 1000 }));
     }
 
     let oddsMaxAmount = settingData.maxMatchOddsAmt
@@ -2855,15 +2938,14 @@ const combinedBetPlaceOdds = async (req, res) => {
     }
 
     if (amount > oddsMaxAmount) {
-        message = `Max Size Is ${oddsMaxAmount}`;
-        return SendResponse(res, "error", message);
+        return SendResponse(res, "error", msg("bet.maxSize", { maxSize: oddsMaxAmount }));
     }
     
    
     let selectionIdArray = bodyData.selectionId
     let runnersData = oddsData.runners
     
-    getNewOpenBetsPositionData = await BetService.calculateCombinedOddsNew(selectionIdArray,runnersData , betType)
+    const getNewOpenBetsPositionData = await BetService.calculateCombinedOddsNew(selectionIdArray, runnersData, betType);
   
     let individualOdds = getNewOpenBetsPositionData.individualOdds
     let totalInverse = getNewOpenBetsPositionData.totalInverse
@@ -2906,7 +2988,7 @@ const combinedBetPlaceOdds = async (req, res) => {
     
     
     if (multiBetArrayData.length < 2) {
-      return SendResponse(res, "error", "only multi bets is accepted");
+      return SendResponse(res, "error", msg("bet.onlyMultiBets"));
     }
     
     let odds = bodyData.odds
@@ -2918,11 +3000,11 @@ const combinedBetPlaceOdds = async (req, res) => {
         odds = combinedOdds
     }
     if (odds != combinedOdds) {
-      return SendResponse(res, "error", "Odds Expired");
+      return SendResponse(res, "error", msg("bet.oddsExpired"));
     }
 
      if (odds < 0 || odds ==0) {
-      return SendResponse(res, "error", "zero or negative odds can not be accepted");
+      return SendResponse(res, "error", msg("bet.zeroNegativeOdds"));
      }
 
     bodyData.odds = odds
@@ -2938,11 +3020,7 @@ const combinedBetPlaceOdds = async (req, res) => {
     const userData = checkUserData.data;
 
     if (!userData.betStatus) {
-      return SendResponse(
-        res,
-        "error",
-        "your bet is locked please contact your agent"
-      );
+      return SendResponse(res, "error", msg("bet.betLocked"));
     }
 
     let oldMatchBet = {};
@@ -2986,7 +3064,7 @@ const combinedBetPlaceOdds = async (req, res) => {
 
 
     if (oldMatchBet) {
-      oldMatchBet = mongoToJson(oldMatchBet);
+      // .lean() already returns plain objects — no mongoToJson needed
     }
 
     
@@ -3039,8 +3117,8 @@ const combinedBetPlaceOdds = async (req, res) => {
     });
 
    
-    var clientIp = requestIp.getClientIp(req);
-    userInfo = {
+    const clientIp = requestIp.getClientIp(req);
+    const userInfo = {
       clientCode: userData.username,
       clientName: userData.name,
       creatorName: userData.creatorName,
@@ -3135,11 +3213,11 @@ const combinedBetPlaceOdds = async (req, res) => {
         oldPosMinAmount = oldBetPosition[currentSelection];
         checkAmount = bodyData.amount * bodyData.odds;
       }
-      check = userData.coins + Math.abs(oldPosMinAmount);
+      check = userCoins + Math.abs(oldPosMinAmount);
     }
 
     if (checkAmount > check) {
-      return SendResponse(res, "error", "invalid Amount");
+      return SendResponse(res, "error", msg("bet.invalidAmount"));
     }
     
 
@@ -3151,7 +3229,7 @@ const combinedBetPlaceOdds = async (req, res) => {
       gameName: "sports",
       gameType: oddsType,
       overallType: "bookmakerOdds",
-      remarks: `${oddsType} Odds for (${matchName})`,
+      remarks: msg("statement.betPlacedRemark", { oddsType, matchName }),
     };
 
 
@@ -3168,49 +3246,9 @@ const combinedBetPlaceOdds = async (req, res) => {
             })
           }
         }
-       } catch (e) {
-      console.log(e, "problem with directShare in bookmaker place bets")
+    } catch (e) {
+      console.error(e, "problem with directShare in combined place bets");
     }
-    
-    
-
-
-    // if(shareData){
-    //   newPosMaxAmount = -1 * newPosMaxAmount
-
-    //   logData["ownerShareAmount"] = Math.round(
-    //     shareData.ownerMatchProfitLossShare * newPosMaxAmount
-    //   );
-  
-    //   logData["subownerShareAmount"] = Math.round(
-    //     shareData.subownerMatchProfitLossShare * newPosMaxAmount
-    //   );
-  
-    //   logData["superadminShareAmount"] = Math.round(
-    //     shareData.superadminMatchProfitLossShare * newPosMaxAmount
-    //   );
-  
-    //   logData["adminShareAmount"] = Math.round(
-    //     shareData.adminMatchProfitLossShare * newPosMaxAmount
-    //   );
-  
-    //   logData["subadminShareAmount"] = Math.round(
-    //     shareData.subadminMatchProfitLossShare * newPosMaxAmount
-    //   );
-  
-    //   logData["masterShareAmount"] = Math.round(
-    //     shareData.masterMatchProfitLossShare * newPosMaxAmount
-    //   );
-  
-    //   logData["superagentShareAmount"] = Math.round(
-    //     shareData.superagentMatchProfitLossShare * newPosMaxAmount
-    //   );
-  
-    //   logData["agentShareAmount"] = Math.round(
-    //     shareData.agentMatchProfitLossShare * newPosMaxAmount
-    //   );
-      
-    // }
 
     await TransactionLogModel.deleteMany({
       userId: userData._id,
@@ -3229,15 +3267,15 @@ const combinedBetPlaceOdds = async (req, res) => {
     const updateCoins = await updateCoinsTbl(userId, userData.userType);
 
   
-    if(updateCoins.totalCoins < 0 ){
-      const logData = {
+    if (!updateCoins || updateCoins.totalCoins < 0) {
+      const rollbackLogData = {
         amount: -1 * Math.abs(oldPosMinAmount),
         forBet: 1,
-        sportId: matchData.sportId  ? matchData.sportId  : 0 ,
+        sportId: matchData.sportId ? matchData.sportId : 0,
         gameName: "sports",
         gameType: oddsType,
         overallType: "bookmakerOdds",
-        remarks: `${oddsType} Odds for (${matchName})`,
+        remarks: msg("statement.betPlacedRemark", { oddsType, matchName }),
       };
 
       await TransactionLogModel.deleteMany({
@@ -3246,12 +3284,12 @@ const combinedBetPlaceOdds = async (req, res) => {
         overallType: "bookmakerOdds",
         gameType: oddsType,
       });
-      await insertTransactionLog(userData, logData, matchData, shareData);
-      let updateCoinsAgain = await updateCoinsTbl(userId, userData.userType);
+      await insertTransactionLog(userData, rollbackLogData, matchData, shareData);
+      const updateCoinsAgain = await updateCoinsTbl(userId, userData.userType);
       return SendResponse(
         res,
         "error",
-        "invalid Amount",
+        msg("bet.invalidAmount"),
         updateCoinsAgain
       );
     }
@@ -3394,20 +3432,30 @@ const [insertBetData, marketCoins, BetServicesData ,oddsPositionResult] = await 
     return SendResponse(
       res,
       "success",
-      `${oddsType} Bets Placed Successfully`,
+      msg("bet.oddsSuccess", { oddsType }),
       updateCoins
     );
   } catch (error) {
-    console.log("Something Went Wrong In Odds Bet Place in oddBetPlaced", error);
+    console.error("combinedBetPlaceOdds error:", error);
     return SendResponse(
       res,
       "error",
-      "Something Went Wrong In Odds Bet Place in oddBetPlaced",
+      "Something Went Wrong In Combined Bet Place",
       error
     );
+  } finally {
+    try {
+      if (betLockKey && lockToken) {
+        const currentLock = await client.get(betLockKey);
+        if (currentLock === lockToken) {
+          await client.del(betLockKey);
+        }
+      }
+    } catch (lockError) {
+      console.error("Combined bet lock release error:", lockError);
+    }
   }
 };
-
 
 const updateBetfairMarket = async (req, res) => {
   const bodyData = req.body;

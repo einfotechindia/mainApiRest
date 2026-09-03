@@ -8,15 +8,18 @@ const C = require("../../Controllers/CenterPanel/CenterPanel.controller");
 router.post("/logs", verifyToken, isOwnerAndStaff, C.GetCenterPanelLogs);
 
 // CenterPanel Secured APIs (HMAC-SHA256)
-router.post("/bookmakerDecision", centerPanelAuth, C.BookmakerDecision);
-router.post("/betfairDecisionAutomatic", centerPanelAuth, C.BetfairDecisionAutomatic);
-router.post("/betfairDecisionManual", centerPanelAuth, C.BetfairDecisionManual);
 router.post("/fancyDecision", centerPanelAuth, C.FancyDecision);
 router.post("/fancyRollback", centerPanelAuth, C.FancyRollback);
 router.post("/cancelFancy", centerPanelAuth, C.CancelFancy);
+router.post("/betfairDecisionManual", centerPanelAuth, C.BetfairDecisionManual);
+router.post("/bookmakerDecision", centerPanelAuth, C.BookmakerDecision);
 router.post("/betsDelete", centerPanelAuth, C.BetsDelete);
+router.post("/eventWiseCheckupReport", centerPanelAuth, C.eventWiseCheckupReport);
+router.post("/betfairDecisionAutomatic", centerPanelAuth, C.BetfairDecisionAutomatic);
+
 router.post("/betfairMarketDecision", centerPanelAuth, C.BetfairMarketDecision);
 router.post("/bookmakerOddsAutomatic", centerPanelAuth, C.BookmakerOddsAutomatic);
 router.post("/fancyAutomaticDecision", centerPanelAuth, C.FancyAutomaticDecision);
+router.post("/eventHealthReport", centerPanelAuth, C.EventHealthReport);
 
 module.exports = router;

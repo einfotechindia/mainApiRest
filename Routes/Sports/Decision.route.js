@@ -1,12 +1,20 @@
 const express = require("express");
 const { verifyToken , isOwnerAndStaff } = require("../../Middlewares/VerifyToken");
+const { rateLimit } = require("../../Middlewares/routeRateLimit");
 const router = express.Router();
 const decisionController = require("../../Controllers/Bets/Decision.controller");
 
-router.post("/sessionDecision", verifyToken, isOwnerAndStaff, decisionController.sessionDecision);
+// Long-running decision routes — 10 min timeout
+const longTimeout = (req, res, next) => {
+  req.setTimeout(600000); // 10 min
+  res.setTimeout(600000);
+  next();
+};
+
+router.post("/sessionDecision", verifyToken, isOwnerAndStaff, longTimeout, decisionController.sessionDecision);
 router.post("/cancelFancy", verifyToken , isOwnerAndStaff , decisionController.cancelFancy);
 router.post("/rollbackFancy",verifyToken, isOwnerAndStaff , decisionController.rollbackFancy);
-router.post("/oddsDecision", verifyToken, isOwnerAndStaff,decisionController.oddsDecision);
+router.post("/oddsDecision", verifyToken, isOwnerAndStaff, longTimeout, decisionController.oddsDecision);
 router.post("/sessionUpdate", verifyToken, isOwnerAndStaff, decisionController.sessionUpdate);
 
 router.post(
@@ -16,7 +24,7 @@ router.post(
   decisionController.generateCasinoClientLedger
 );
 
-router.post("/betsDelete", verifyToken, isOwnerAndStaff, decisionController.betsDelete);
+router.post("/betsDelete", verifyToken, isOwnerAndStaff, rateLimit(5, 60), decisionController.betsDelete);
 router.post("/betfairMarketDecision", verifyToken,  isOwnerAndStaff, decisionController.betfairMarketDecision);
 
 

@@ -241,6 +241,12 @@ const CrickTransactionLogModel = mongoose.model(
       { key: { superagentId: 1, transactionType: 1, _id: -1 } },
       { key: { agentId: 1, transactionType: 1, _id: -1 } },
       { key: { clientId: 1, transactionType: 1, _id: -1 } },
+      // GetUserCoins — crick aggregation
+      { key: { userId: 1, creatorId: 1, transactionType: 1 } },
+      // Decision — deleteMany + insertMany by marketId+selectionId
+      { key: { marketId: 1, selectionId: 1 } },
+      // UserReport/dashboard — profitLoss queries by date
+      { key: { transactionType: 1, date: 1 } },
     ];
 
     for (const index of neededIndexes) {

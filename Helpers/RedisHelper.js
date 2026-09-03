@@ -30,14 +30,22 @@ const makeRedisClient = ({ host, port, password, name } = {}) => {
     port,
     password,
     ...DEFAULT_OPTS,
+    // ============================================================
+    // HIGH CONCURRENCY — million users ke liye
+    // ============================================================
+    enable_offline_queue: true,
+    no_ready_check: false,
   });
+
+  // Increase max listeners for high concurrent load
+  client.setMaxListeners(0);
 
   client.on("connect", () => {
     console.log(`${name || "Redis"} client connected (${host}:${port})`);
   });
 
   client.on("error", (err) => {
-    console.error(`${name || "Redis"} client error:`, err);
+    console.error(`${name || "Redis"} client error:`, err.message);
   });
 
   client.on("end", () => {
@@ -191,4 +199,5 @@ module.exports = {
   getRacingDataByRedis,
   setRedisJson,
   quitAll,
+  centerpanelRedis:centerpanelRedis
 };

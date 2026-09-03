@@ -12,53 +12,79 @@ const { AuthErrMsg, siteSetting } = require("../Common/Constants");
 const UserService11 = require("../Services/User/User.service");
 const { client } = require("../Helpers/RedisHelper");
 const { _dx, _d } = require("../Helpers/CommonHelper");
-var requestIp = require("request-ip");
+const requestIp = require("request-ip");
 const TrackingModel = require("../Models/User/Tracking.model");
+const { msg } = require("../Helpers/MessageHelper");
+
+
+
+const { isBot } = require("../Helpers/BotDetector");
 
 async function verifyToken(req, res, next) {
+  // ============================================================
+  // BOT/SCRIPT DETECTION — block before any processing
+  // ============================================================
+  if (isBot(req)) {
+    return SendResponse(res, "Unauthorized", msg("auth.botDetected"));
+  }
+
   const token = req.headers.authorization?.split(" ")[1];
   if (!token) {
-    return SendResponse(res, "Unauthorized", "Token Required");
+    return SendResponse(res, "Unauthorized", msg("auth.tokenRequired"));
   }
+
   try {
-    var clientIp = requestIp.getClientIp(req);
+    const clientIp = requestIp.getClientIp(req) || "";
     const path = req.route.path;
-    const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
-    
-    let user = {};
-    let userStatus = 0;
-    let userDeletedStatus = true;
-    let check = true;
 
-    const currentHash = crypto
-        .createHash("sha256")
-        .update(clientIp)
-        .digest("hex");
-    
-    // if (!decodedToken.deviceHash || decodedToken.deviceHash !== currentHash) {
-    //   return SendResponse(res, "Unauthorized", "token expired ! Please login again");
-    // }
+    // ============================================================
+    // 1. JWT VERIFY
+    // ============================================================
 
+    let decodedToken;
+    try {
+      decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (jwtErr) {
+      // TokenExpiredError — 12h expiry hit
+      if (jwtErr.name === "TokenExpiredError") {
+        return SendResponse(res, "Unauthorized", msg("auth.sessionExpiredRelogin"));
+      }
+      // JsonWebTokenError — tampered/invalid token
+      console.error("verifyToken JWT error:", jwtErr.name, jwtErr.message);
+      return SendResponse(res, "Unauthorized", msg("auth.tokenExpired"));
+    }
 
     if (!decodedToken.authToken) {
-      return SendResponse(
-        res,
-        "Unauthorized",
-        "Authtoken Required ! Please Login Again"
-      );
+      return SendResponse(res, "Unauthorized", msg("auth.authTokenRequired"));
     }
+
+    const currentHash = crypto
+      .createHash("sha256")
+      .update(clientIp)
+      .digest("hex");
+
+    // ============================================================
+    // 2. FETCH USER — Redis first, DB fallback
+    // ============================================================
+
+    let user = null;
+    let userStatus = 0;
+    let fromRedis = false;
 
     if (siteSetting.IS_REDIS) {
-      user = await client.hgetall(decodedToken.userId);
-      if (user && user.status != null && user.isDeleted != null) {
-        userStatus = user.status;
-        userDeletedStatus = user.isDeleted;
-        check = false;
+      try {
+        const redisUser = await client.hgetall(decodedToken.userId);
+        if (redisUser && Object.keys(redisUser).length > 0 && redisUser.status != null && redisUser.isDeleted != null) {
+          user = redisUser;
+          userStatus = Number(redisUser.status);
+          fromRedis = true;
+        }
+      } catch (redisErr) {
+        console.error("verifyToken Redis error:", redisErr.message);
       }
     }
-    
 
-    if (check) {
+    if (!fromRedis) {
       user = await UserModel.findOne({
         _id: decodedToken.userId,
         status: 1,
@@ -66,216 +92,101 @@ async function verifyToken(req, res, next) {
       });
 
       if (!user) {
-        return SendResponse(res, "Unauthorized", "user not found");
+        return SendResponse(res, "Unauthorized", msg("auth.userNotFound"));
       }
 
       if (siteSetting.IS_REDIS) {
         UserService11.setUserRedisData(decodedToken.userId, user);
       }
-      userStatus = user.status;
-      userDeletedStatus = user.isDeleted;
+      userStatus = Number(user.status);
     }
 
-    if (user.jwtToken == "" || !user.jwtToken) {
-      return SendResponse(
-        res,
-        "Unauthorized",
-        "token expired ! Please login again"
-      );
-    }
-
-    // if (
-    //   user.authenticateToken != decodedToken.authToken &&
-    //   decodedToken.userType != "owner"
-    // ) {
-    //   return SendResponse(
-    //     res,
-    //     "Unauthorized",
-    //     "token expired ! Please login again"
-    //   );
-    // }
-
- 
-
-    
-    if (token !== user.jwtToken && decodedToken.userType == "client" && !user.isDemoClient) {
-      return SendResponse(
-        res,
-        "Unauthorized",
-        "token expired ! Please login again"
-      );
-    }
+    // ============================================================
+    // 3. USER VALIDITY CHECK — must come before jwtToken access
+    // ============================================================
 
     if (!user || !userStatus) {
-      return SendResponse(res, "Unauthorized", AuthErrMsg.invalidUser);
+      return SendResponse(res, "Unauthorized", msg("auth.invalidUser"));
     }
 
-    if (path == "/userBalance" && decodedToken.userType == "client") {
+    // ============================================================
+    // 4. JWT TOKEN CHECK — all user types
+    // ============================================================
+
+    if (!user.jwtToken || user.jwtToken === "") {
+      return SendResponse(res, "Unauthorized", msg("auth.tokenExpired"));
+    }
+
+    // JWT token must match stored token — ensures single active session
+    // This applies to ALL user types (client, agent, admin, owner etc.)
+    // Only demo clients are exempted
+    if (!user.isDemoClient && token !== user.jwtToken) {
+      return SendResponse(res, "Unauthorized", msg("auth.loggedInElsewhere"));
+    }
+
+    // ============================================================
+    // 5. CLIENT-SPECIFIC CHECKS — device hash + auth token
+    // ============================================================
+
+    if (decodedToken.userType === "client") {
+      // Device hash or auth token mismatch — someone stole the token
+      if (decodedToken.deviceHash !== currentHash || user.authenticateToken != decodedToken.authToken) {
+        return SendResponse(res, "Unauthorized", msg("auth.tokenExpired"));
+      }
+    }
+
+    // ============================================================
+    // 6. USER BALANCE SHORTCUT — with rate limiting
+    // ============================================================
+
+    if (path === "/userBalance") {
+      if (siteSetting.IS_REDIS) {
+        try {
+          const balanceRateKey = `balance:rate:${decodedToken.userId}`;
+          const balanceAllowed = await client.set(balanceRateKey, "1", "NX", "EX", 1);
+          if (balanceAllowed !== "OK") {
+            return SendResponse(res, "error", msg("auth.balanceRateLimited"));
+          }
+        } catch (_) {}
+      }
+
       return SendResponse(res, "Success", "", {
         coins: user.coins,
         exposure: user.exposure,
-        profitLoss:  user.profitLoss ? user.profitLoss : 0,
+        profitLoss: user.profitLoss ? user.profitLoss : 0,
       });
     }
 
+    // ============================================================
+    // 7. REQUEST TRACKING (non-blocking)
+    // ============================================================
 
-    if (decodedToken.userType !== "client" && path !== "/userBalance") {
-      setImmediate(() => {
-        TrackingModel.create({
-          userId: decodedToken.userId,
-          username: decodedToken.username,
-          authToken: user.authenticateToken,
-          jwtToken: token,
-          bodyData: req.body,
-          headers: req.headers,
-          ip: clientIp,
-          hitUrl: path,
-        }).catch(console.error);
+    setImmediate(() => {
+      TrackingModel.create({
+        userId: decodedToken.userId,
+        username: decodedToken.username,
+        authToken: user.authenticateToken,
+        jwtToken: token,
+        bodyData: req.body,
+        headers: req.headers,
+        ip: clientIp,
+        hitUrl: path,
+      }).catch((trackErr) => {
+        console.error("verifyToken tracking error:", trackErr.message);
       });
-    }
+    });
+
+    // ============================================================
+    // 8. PASS TO NEXT MIDDLEWARE
+    // ============================================================
 
     req.loggedInUser = decodedToken;
     next();
   } catch (error) {
-    return SendResponse(res, "Unauthorized", error.message);
+    console.error("verifyToken unexpected error:", error.message);
+    return SendResponse(res, "Unauthorized", msg("auth.genericError"));
   }
 }
-
-
-
-// async function verifyToken(req, res, next) {
-//   try {
-   
-//     const token = req.headers.authorization?.split(" ")[1];
-//     if (!token) {
-//       return SendResponse(res, "Unauthorized", "Token Required");
-//     }
-//     var clientIp = requestIp.getClientIp(req);
-//     const path = req.route.path;
-//     const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
-//     let user = {};
-//     let userStatus = 0;
-//     let userDeletedStatus = false;
-//     let check = true;
-//     if (process.env.ENABLE_DEVICE_BINDING === "true") { 
-//        const currentHash = crypto
-//         .createHash("sha256")
-//         .update(clientIp)
-//         .digest("hex");
-//         if (!decodedToken.deviceHash || decodedToken.deviceHash !== currentHash) {
-//           return SendResponse(res, "Unauthorized", "token expired ! Please login again");
-//         }
-//     }
-//     if (!decodedToken.authToken) {
-//       return SendResponse(
-//         res,
-//         "Unauthorized",
-//         "token required ! Please login again"
-//       );
-//     }
-//     let loginUserType = decodedToken?.userType
-
-//     if (siteSetting.IS_REDIS) {
-//       user = await client.hgetall(decodedToken.userId);
-//       if (user && user.status != null && user.isDeleted != null) {
-//         userStatus = user.status;
-//         userDeletedStatus = user.isDeleted
-//         check = false;
-//       }
-//     }
-    
-//     if (check) {
-//       if(loginUserType === "staff"){
-//         user = await StaffModel.findById(decodedToken.userId)
-//           .lean();
-//       } else {  
-//         user = await UserModel.findOne({
-//           _id: decodedToken.userId,
-//           status: 1,
-//           isDeleted: false,
-//         }); 
-//       }
-//       if (!user) {
-//         return SendResponse(res, "Unauthorized", "user not found");
-//       }
-
-//       if (siteSetting.IS_REDIS) {
-//         UserService11.setUserRedisData(decodedToken.userId, user);
-//       }
-//       userStatus = user.status;
-//       userDeletedStatus = user.isDeleted ? user.isDeleted : false;
-//     }
-//     if (user.jwtToken == "" || !user.jwtToken) {
-//       return SendResponse(
-//         res,
-//         "Unauthorized",
-//         "token expired ! Please login again"
-//       );
-//     }
-
-//     let checkOneDeviceLogin = false;
-//     if(loginUserType === "client" && process.env.IS_CLIENT_ONE_DEVICE_LOGIN === "true"){
-//       checkOneDeviceLogin = true;
-//     } else if(loginUserType === "staff" && process.env.IS_STAFF_ONE_DEVICE_LOGIN === "true"){
-//       checkOneDeviceLogin = true;
-//     } else if(loginUserType !== "client" && loginUserType !== "staff" && process.env.IS_USER_ONE_DEVICE_LOGIN === "true"){
-//       checkOneDeviceLogin = true;
-//     }   
-
-//     if(checkOneDeviceLogin && user.authenticateToken != decodedToken.authToken && decodedToken.userType != "owner"){
-//       return SendResponse(
-//         res,
-//         "Unauthorized",
-//         "token expired ! Please login again"
-//       );
-//     }
-
-//     if (token !== user.jwtToken && decodedToken.userType == "client" && !user.isDemoClient) {
-//       return SendResponse(
-//         res,
-//         "Unauthorized",
-//         "token expired ! Please login again"
-//       );
-//     }
-
-//     if (!user || !userStatus) {
-//       return SendResponse(res, "Unauthorized", AuthErrMsg.invalidUser);
-//     }
-
-
-//     if (path == "/userBalance" && loginUserType == "client") {
-//       return SendResponse(res, "success", "", {
-//         coins: user.coins,
-//         exposure: user.exposure,
-//         profitLoss:  user.profitLoss ? user.profitLoss : 0,
-//       });
-//     }
-
-    
-//     if (decodedToken.userType !== "client" && path !== "/userBalance") {
-//       setImmediate(() => {
-//         TrackingModel.create({
-//           userId: decodedToken.userId,
-//           username: decodedToken.username,
-//           authToken: user.authenticateToken,
-//           jwtToken: token,
-//           bodyData: req.body,
-//           headers: req.headers,
-//           ip: clientIp,
-//           hitUrl: path,
-//         }).catch(console.error);
-//       });
-//     }
-
-//     req.loggedInUser = decodedToken;
-//     next();
-//   } catch (error) {
-//     console.log(error)
-//     return SendResponse(res, "Unauthorized", error.message);
-//   }
-// }
-
-
 
 
 
@@ -350,7 +261,7 @@ async function verifyCasinoToken(req, res, next) {
 const companyVerifyToken = async (req, res, next) => {
   const token = req.headers.authorization?.split(" ")[1];
   if (!token) {
-    return SendResponse(res, "Unauthorized", "Token Required");
+    return SendResponse(res, "Unauthorized", msg("auth.tokenRequired"));
   }
   next();
 };
@@ -450,10 +361,10 @@ const API_PERMISSION_MAP = {
 const isOwnerAndStaff = async (req, res, next) => {
   const userType = req?.loggedInUser?.userType;
   if (!userType) {
-    return SendResponse(res, "error", "unauthorized");
+    return SendResponse(res, "error", msg("auth.unauthorizedAccess"));
   }
   if (!["owner", "staff"].includes(userType)) {
-    return SendResponse(res, "error", "you are not authorised to access this");
+    return SendResponse(res, "error", msg("auth.notAuthorised"));
   }
 
   // Owner has full access — skip permission check
@@ -481,7 +392,7 @@ const isOwnerAndStaff = async (req, res, next) => {
     if (!permissions) {
       const staff = await StaffModel.findOne({ _id: staffId, isDeleted: false }).select("permissions").lean();
       if (!staff) {
-        return SendResponse(res, "Unauthorized", "Staff not found");
+        return SendResponse(res, "Unauthorized", msg("auth.staffNotFound"));
       }
       permissions = staff.permissions || {};
 
@@ -509,7 +420,7 @@ const isOwnerAndStaff = async (req, res, next) => {
         metadata: { path, permKey, action },
       });
 
-      return SendResponse(res, "error", `You don't have ${action} permission for this action`);
+      return SendResponse(res, "error", msg("auth.noPermission", { action }));
     }
 
     next();
@@ -524,5 +435,5 @@ module.exports = {
   verifyToken,
   verifyCasinoToken,
   companyVerifyToken,
-  isOwnerAndStaff
+  isOwnerAndStaff,
 };

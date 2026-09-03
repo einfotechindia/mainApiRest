@@ -108,16 +108,14 @@ const StatementModel = mongoose.model("statement", StatementSchema);
     const existingIndexes = await StatementModel.collection.indexes();
 
     const neededIndexes = [
-      {
-        key: { userId: 1, _id: -1 },
-      },
-      { key: { userId: 1 } },
+      { key: { userId: 1, _id: -1 } },
+      // Removed { userId: 1 } — duplicate of above (userId:1,_id:-1 covers it)
       { key: { betId: 1 } },
       { key: { roundId: 1 } },
       { key: { userId: 1, userType: 1, date: -1 } },
-      {
-        key: { marketId: 1, statementFor: 1 },
-      },
+      { key: { marketId: 1, statementFor: 1 } },
+      // Decision — bulkWrite upsert by marketId+selectionId+statementFor+userId
+      { key: { marketId: 1, selectionId: 1, statementFor: 1, userId: 1 } },
     ];
 
     for (const index of neededIndexes) {

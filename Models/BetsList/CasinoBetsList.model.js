@@ -68,6 +68,10 @@ let CasinoBetListSchema = new Schema({
     default: "",
     required: true,
   },
+  jokerCard: {
+    type: String,
+    default: "",
+  },
   result: {
     type: String,
     default: "",
@@ -202,6 +206,14 @@ const CasinoBetListModel = mongoose.model(
       {
         key: {
           roundId: 1,
+        },
+      },
+      // Ledger — diamond casino date-wise aggregation
+      {
+        key: {
+          date: 1,
+          isDeclare: 1,
+          eventId: 1,
         },
       },
     ];

@@ -49,7 +49,9 @@ const PlayModel = require("../../Models/Play.model");
 
 const BetService = require("../../Services/Sports/Bet.service");
 const DecisionService = require("../../Services/Sports/Decision.service");
+const { msg } = require("../../Helpers/MessageHelper");
 const { getUserIdByUsername, getShareChainData } = require("../../Helpers/UsersUtils");
+const { acquireDecisionLock, releaseDecisionLock } = require("../../Helpers/DecisionQueue");
 
 const sessionDecision = async (req, res) => {
   const startTime = new Date();
@@ -72,32 +74,21 @@ const sessionDecision = async (req, res) => {
   const marketId = bodyData.marketId;
   let decisionRun = bodyData.decisionRun;
 
-  let isCrickTransaction = false;
-  if (
-    process.env.IS_CRICK_TRANSACTION &&
-    process.env.IS_CRICK_TRANSACTION == "true"
-  ) {
-    isCrickTransaction = true;
-  }
-  try {
-    let resultExecute = await client.get(
-      `sessionDecisionFor_${selectionId}_${marketId}`
-    );
-    if (resultExecute) {
-      if (res) {
-        return SendResponse(res, "error", "result already going on ");
-      } else {
-        _d("result already going on ");
-        return false;
-      }
+  // ============================================================
+  // DECISION QUEUE — wait for previous decision on same market
+  // ============================================================
+  const decisionLock = await acquireDecisionLock(marketId);
+  if (!decisionLock.acquired) {
+    if (res) {
+      return SendResponse(res, "error", decisionLock.message);
     }
-    await client.set(`sessionDecisionFor_${selectionId}_${marketId}`, true);
-    await client.expire(`sessionDecisionFor_${selectionId}_${marketId}`, 120); // wait for one minute
+    return false;
+  }
+
+  try {
 
     let fancyName = "";
 
-
-    
     let matchData = await sportList.findOne({ marketId: marketId });
 
     let databaseFancyData = await fancyListModel.findOne({
@@ -244,14 +235,10 @@ const sessionDecision = async (req, res) => {
         });
     directUserShareData = convertKeyObject(directUserShareData, "userId")
 
-
-
     let insertTransactionLog = [];
     let crickInsertTransactionLog = [];
     let statementLog = [];
     let remarks = "";
-
-
 
    for (const [key, data] of playData.entries()) {
     try {
@@ -265,7 +252,7 @@ const sessionDecision = async (req, res) => {
         const profitLoss = clientData.profitLoss;
         const sessionTurnOver = clientData.sessionTurnOver;
         fancyName = clientData.sessionName;
-        remarks = `${clientData.sessionName}`;
+        remarks = msg("decision.sessionRemark", { sessionName: clientData.sessionName });
         let gtype = clientData.gtype ? clientData.gtype : "";
 
         let matchShareArray = {};
@@ -284,7 +271,7 @@ const sessionDecision = async (req, res) => {
         }
 
 
-        let socketRemark =  `You ${profitLoss < 0 ? `Loss`:`won`} ${Math.abs(profitLoss)} for ${fancyName}`
+        let socketRemark = msg("decision.sessionSocketRemark", { winLoss: profitLoss < 0 ? "Loss" : "won", amount: Math.abs(profitLoss), sessionName: fancyName });
         let socketObj = {
           type : "fancy",
           profitLoss: profitLoss,
@@ -343,7 +330,7 @@ const sessionDecision = async (req, res) => {
           userType: "client",
           gameType: "Cricket",
           sportsType: "Cricket",
-          remark: `(${clientData.sessionName}) ${userRemark} - Result (${decisionRun})`,
+          remark: msg("decision.sessionStatementRemark", { sessionName: clientData.sessionName, winLoss: userRemark, decisionRun }),
           userRemark: userRemark,
           statementFor: "fancyBet",
           marketId: marketId,
@@ -351,7 +338,7 @@ const sessionDecision = async (req, res) => {
         };
         statementLog.push(pushStatementLog);
 
-        let crickRemark = `${remarks} - ${matchData.matchName}-${matchData.seriesName}`;
+        let crickRemark = msg("decision.sessionCrickRemark", { sessionName: clientData.sessionName, matchName: matchData.matchName, seriesName: matchData.seriesName });
 
         const crickPushTransactionLog = {
           amount: profitLoss,
@@ -458,7 +445,7 @@ const sessionDecision = async (req, res) => {
             isDeclare: 1,
             forBet: 1,
             isComm: 1,
-            remarks: clientData.sessionName + " Comm",
+            remarks: msg("decision.sessionCommRemark", { sessionName: clientData.sessionName }),
             result: decisionRun,
           };
 
@@ -470,7 +457,7 @@ const sessionDecision = async (req, res) => {
             userType: "client",
             gameType: "Cricket",
             sportsType: "cricket",
-            remark: `${clientData.sessionName} Comm credited`,
+            remark: msg("decision.sessionCommStatementRemark", { sessionName: clientData.sessionName }),
             userRemark: "Comm Credited",
             statementFor: "fancyBetComm",
             marketId: marketId,
@@ -628,12 +615,12 @@ const sessionDecision = async (req, res) => {
       }
     }
 
-    if (isCrickTransaction) {
+   
       let crickTransactionChunks = chunkArrayNew(crickInsertTransactionLog, 1000);
       for (const crickTransactionChunk of crickTransactionChunks) {
         await CrickTransactionLogModel.insertMany(crickTransactionChunk);
       }
-    }
+    
 
 
 
@@ -712,25 +699,22 @@ const sessionDecision = async (req, res) => {
 
 
     await declarePositionAndLedger(marketId, "", true, uniqueClientData);
-    await client.del(`sessionDecisionFor_${selectionId}_${marketId}`);
-    await client.get(`fancyList_${matchData.eventId}`)
-    await caclculateTime(startTime, `fancy decision end for ${fancyName}`)
+    await client.get(`fancyList_${matchData.eventId}`);
+    await caclculateTime(startTime, `fancy decision end for ${fancyName}`);
 
-    await emitToMultipleUsers(socketDecisionIdArray , "decisionResult")
-    
+    await emitToMultipleUsers(socketDecisionIdArray, "decisionResult");
 
     if (res) {
       return SendResponse(
         res,
         "success",
-        `Fancy Bet Successfully Done for ${fancyName}`,
+        msg("decision.sessionSuccessMsg", { sessionName: fancyName }),
       );
     } else {
       return true;
     }
   } catch (error) {
-    await client.del(`sessionDecisionFor_${selectionId}_${marketId}`);
-    console.log("Something Went Wrong In Session Decision", error);
+    console.error("Something Went Wrong In Session Decision", error);
     return SendResponse(
       res,
       "error",
@@ -738,7 +722,7 @@ const sessionDecision = async (req, res) => {
       error
     );
   } finally {
-    await client.del(`sessionDecisionFor_${selectionId}_${marketId}`, true);
+    await releaseDecisionLock(marketId, decisionLock.token);
   }
 };
 
@@ -759,6 +743,8 @@ const rollbackFancy = async (req, res) => {
       return SendResponse(res, "error", "Failed In validation", errorMessages);
     }
 
+   
+
     const selectionId = bodyData.selectionId;
     const marketId = bodyData.marketId;
     let decisionRun = 0;
@@ -766,6 +752,7 @@ const rollbackFancy = async (req, res) => {
     const sessionBetList = await BetService.getFancyBetList({
       marketId: marketId,
       selectionId: selectionId,
+      isDeleted : 0
     });
 
     if (sessionBetList.length < 1) {
@@ -864,7 +851,7 @@ const rollbackFancy = async (req, res) => {
           selectionId: selectionId,
           isDeclare: 0,
           forBet: 1,
-          remarks: clientData.sessionName,
+          remarks: msg("decision.sessionRemark", { sessionName: clientData.sessionName }),
           ownerAmount: profitLoss * matchShareArray.ownerMatchProfitLossShare,
           subownerAmount:
             profitLoss * matchShareArray.subownerMatchProfitLossShare,
@@ -882,29 +869,35 @@ const rollbackFancy = async (req, res) => {
       }
     });
 
-    await TransactionLogModel.deleteMany({
-      marketId: marketId,
-      selectionId: selectionId + "",
-      overallType: { $in: ["fancyOdds", "fancyOddsComm"] },
-      forBet: 1,
-    });
+    await Promise.all([
+        TransactionLogModel.deleteMany({
+              marketId: marketId,
+              selectionId: selectionId + "",
+              overallType: { $in: ["fancyOdds", "fancyOddsComm"] },
+              forBet: 1,
+        }),
+        StatementModel.deleteMany({
+        marketId: marketId,
+        selectionId: selectionId,
+        statementFor: { $in: ["fancyBet", "fancyBetComm"] },
+        }),
+        CrickTransactionLogModel.deleteMany({
+          marketId: marketId,
+          selectionId: selectionId + "",
+        })
+    ])
 
-    await StatementModel.deleteMany({
-      marketId: marketId,
-      selectionId: selectionId,
-      statementFor: { $in: ["fancyBet", "fancyBetComm"] },
-    });
-
-    await TransactionLogModel.insertMany(insertTransactionLog);
-
-    await FancyBetModel.updateMany(
-      { marketId: marketId, selectionId: selectionId },
-      { $set: { decisionRun: "", isDeclare: 0, isDeleted: 0 } }
-    );
-    await PlayModel.updateMany(playWhere, {
-      updateSessionBet: true,
-    });
-
+    await Promise.all([
+        TransactionLogModel.insertMany(insertTransactionLog),
+        FancyBetModel.updateMany(
+        { marketId: marketId, selectionId: selectionId },
+        { $set: { decisionRun: "", isDeclare: 0} }
+        ),
+        PlayModel.updateMany(playWhere, {
+        updateSessionBet: true,
+      })
+    ])
+    
     const updateUserCoins = await updateBulkCoinsExposureUserByMarketId(
       uniqueClientData,
       marketId,
@@ -914,7 +907,7 @@ const rollbackFancy = async (req, res) => {
     return SendResponse(
       res,
       "success",
-      "Fancy Rollback Successfully Done",
+      msg("decision.rollbackSuccessMsg"),
       updateUserCoins
     );
   } catch (error) {
@@ -943,7 +936,7 @@ const cancelFancy = async (req, res) => {
       const errorMessages = error.details.map((detail) => detail.message);
       return SendResponse(res, "error", "Failed In validation", errorMessages);
     }
-    let deletedRemark = "cancel";
+    let deletedRemark = bodyData.remark ? bodyData.remark : "cancel";
     if (bodyData.deletedRemark) {
       deletedRemark = bodyData.deletedRemark;
     }
@@ -1085,11 +1078,21 @@ const oddsDecision = async (req, res) => {
   const marketId = bodyData.marketId;
 
   let oddsType = "bookmaker";
-    if (isToss) {
-      oddsType = "toss";
+  if (isToss) {
+    oddsType = "toss";
+  }
+
+  // ============================================================
+  // DECISION QUEUE — wait for previous decision on same market
+  // ============================================================
+  const decisionLock = await acquireDecisionLock(marketId);
+  if (!decisionLock.acquired) {
+    if (res) {
+      return SendResponse(res, "error", decisionLock.message);
     }
-  
-  
+    return false;
+  }
+
   try {
     let settingData = await getSettingData();
     
@@ -1211,6 +1214,8 @@ const oddsDecision = async (req, res) => {
     await caclculateTime(startTime, "oddsDecision start")
 
 
+    //_d(decisionSelectionId)
+
     const decisionOdds = await DecisionService.oddsDecision(
       matchData,
       oddsType,
@@ -1271,8 +1276,7 @@ const oddsDecision = async (req, res) => {
       return decisionOdds.data;
     }
   } catch (error) {
-    await client.del(`matchDecisionFor_${marketId}`);
-    console.log("Something Went Wrong In Match Odds Decision", error);
+    console.error("Something Went Wrong In Match Odds Decision", error);
     if (res) {
       return SendResponse(
         res,
@@ -1284,7 +1288,7 @@ const oddsDecision = async (req, res) => {
       return false;
     }
   } finally {
-    await client.del(`matchDecisionFor_${marketId}`, true);
+    await releaseDecisionLock(marketId, decisionLock.token);
   }
 };
 
@@ -1766,7 +1770,7 @@ const declarePositionAndLedger = async (
           marketId: marketId,
           sportsType: "cricket",
           gameType: "cricket",
-          remark: `user Comm For Match (${matchData.matchName})}`,
+          remark: msg("decision.oddsCommRemark", { matchName: matchData.matchName }),
           userRemark: `user Comm For Match (${matchData.matchName})`,
           statementFor: `userComm`,
           isComm: true,
@@ -1943,7 +1947,7 @@ const generateLedger = async (marketId, positionData, matchData, isFancy) => {
       amount: 0,
       isDeclare: 1,
       eventName: matchData.matchName,
-      remark: matchData.wonTeamName + " Win The Match",
+      remark: msg("decision.oddsWinRemark", { wonTeamName: matchData.wonTeamName }),
       priority: "",
     };
 
@@ -4053,7 +4057,7 @@ const userCommissionReport = async (req, res) => {
       .sort({ _id: -1 });
 
 
-     _d(resMatch , "resMatch")
+     //_d(resMatch , "resMatch")
 
     let ledgerGroup = {
       _id: "$userId",
@@ -4077,7 +4081,7 @@ const userCommissionReport = async (req, res) => {
     submitLedger = await convertKeyObject(submitLedger, "_id");
 
 
-     _d(submitLedger)
+   //  _d(submitLedger)
 
     resMatch.map((data, key) => {
       let finalOddsComm = data.oddsComm;
@@ -4295,7 +4299,7 @@ const resetComm = async (req, res) => {
       oddsComm: resMatch[0].oddsComm > 0 ? resMatch[0].oddsComm : 0,
       sessionComm: resMatch[0].sessionComm > 0 ? resMatch[0].sessionComm : 0,
       casinoComm: resMatch[0].casinoComm > 0 ? resMatch[0].casinoComm : 0,
-      remark: `comm submitted for ${userInfo.username} (${userInfo.name}))`,
+      remark: msg("decision.commSubmittedRemark", { username: userInfo.username, name: userInfo.name }),
       ownerId: user.ownerId,
       subownerId: user.subownerId,
       superadminId: user.superadminId,
@@ -4583,7 +4587,7 @@ const generateCasinoClientLedger = async (req, res) => {
         marketId: data.marketId,
         eventId: data.marketId,
         eventName: `${data.casinoName} (${showDate})`,
-        remark: `${data.casinoName} (${showDate})`,
+        remark: msg("decision.casinoLedgerRemark", { casinoName: data.casinoName, date: showDate }),
         date: data.date,
         userType: "client",
         ledgerType: "internationalCasino",
@@ -4788,12 +4792,19 @@ const betsDelete = async (req, res) => {
     );
   }
 
-  return SendResponse(
-    res,
-    "success",
-    "bets updated successfully",
-    ResponseMapper
-  );
+
+  if (res) {
+      return SendResponse(
+      res,
+      "success",
+      "bets updated successfully",
+      ResponseMapper
+    );
+  } else {
+    return ResponseMapper
+  }
+
+  
 };
 
 const generateUserLedger = async (date, dateWhere) => {
@@ -4926,7 +4937,7 @@ const generateUserLedger = async (date, dateWhere) => {
         marketId: data.marketId,
         eventId: data.marketId,
         eventName: `${data.casinoName}`,
-        remark: `${data.casinoName}`,
+        remark: msg("decision.casinoRemark", { casinoName: data.casinoName }),
         date: date,
         userType: "agent",
         ledgerType: "internationalCasino",
@@ -5015,7 +5026,7 @@ const generateUserLedger = async (date, dateWhere) => {
         marketId: data.marketId,
         eventId: data.marketId,
         eventName: `${data.casinoName}`,
-        remark: `${data.casinoName}`,
+        remark: msg("decision.casinoRemark", { casinoName: data.casinoName }),
         date: date,
         userType: "superagent",
         ledgerType: "internationalCasino",
@@ -5099,7 +5110,7 @@ const generateUserLedger = async (date, dateWhere) => {
         marketId: data.marketId,
         eventId: data.marketId,
         eventName: `${data.casinoName}`,
-        remark: `${data.casinoName}`,
+        remark: msg("decision.casinoRemark", { casinoName: data.casinoName }),
         date: date,
         userType: "master",
         ledgerType: "internationalCasino",
@@ -5179,7 +5190,7 @@ const generateUserLedger = async (date, dateWhere) => {
         marketId: data.marketId,
         eventId: data.marketId,
         eventName: `${data.casinoName}`,
-        remark: `${data.casinoName}`,
+        remark: msg("decision.casinoRemark", { casinoName: data.casinoName }),
         date: date,
         userType: "master",
         ledgerType: "internationalCasino",
@@ -5261,7 +5272,7 @@ const generateUserLedger = async (date, dateWhere) => {
         marketId: data.marketId,
         eventId: data.marketId,
         eventName: `${data.casinoName}`,
-        remark: `${data.casinoName}`,
+        remark: msg("decision.casinoRemark", { casinoName: data.casinoName }),
         date: date,
         userType: "subadmin",
         ledgerType: "internationalCasino",
@@ -5349,7 +5360,7 @@ const generateUserLedger = async (date, dateWhere) => {
         marketId: data.marketId,
         eventId: data.marketId,
         eventName: `${data.casinoName}`,
-        remark: `${data.casinoName}`,
+        remark: msg("decision.casinoRemark", { casinoName: data.casinoName }),
         date: date,
         userType: "superadmin",
         ledgerType: "internationalCasino",
@@ -5433,7 +5444,7 @@ const generateUserLedger = async (date, dateWhere) => {
         marketId: data.marketId,
         eventId: data.marketId,
         eventName: `${data.casinoName}`,
-        remark: `${data.casinoName}`,
+        remark: msg("decision.casinoRemark", { casinoName: data.casinoName }),
         date: date,
         userType: "subowner",
         ledgerType: "internationalCasino",
@@ -5509,7 +5520,7 @@ const generateUserLedger = async (date, dateWhere) => {
         marketId: data.marketId,
         eventId: data.marketId,
         eventName: `${data.casinoName}`,
-        remark: `${data.casinoName}`,
+        remark: msg("decision.casinoRemark", { casinoName: data.casinoName }),
         date: date,
         userType: "owner",
         ledgerType: "internationalCasino",
@@ -5535,9 +5546,9 @@ const betfairMarketDecision = async (req, res) => {
 
   try {
     if (!eventId) {
-      const msg = "eventId is required";
-      if (isHttpHandler) return SendResponse(res, "error", msg);
-      throw new Error(msg);
+      const errMsg = "eventId is required";
+      if (isHttpHandler) return SendResponse(res, "error", errMsg);
+      throw new Error(errMsg);
     }
 
     let where = {
@@ -5555,9 +5566,9 @@ const betfairMarketDecision = async (req, res) => {
 
 
     if (marketIds.length === 0) {
-      const msg = "No markets found for the given eventId";
-      if (isHttpHandler) return SendResponse(res, "success", msg, { eventId, marketCount: 0 });
-      return { ok: true, message: msg, data: { eventId, marketIds } };
+      const infoMsg = "No markets found for the given eventId";
+      if (isHttpHandler) return SendResponse(res, "success", infoMsg, { eventId, marketCount: 0 });
+      return { ok: true, message: infoMsg, data: { eventId, marketIds } };
     }
 
 
@@ -5827,32 +5838,20 @@ const manualBetfairDecision = async (req, res) => {
       const errorMessages = error.details.map((detail) => detail.message);
       return SendResponse(res, "error", "Failed In validation", errorMessages);
     }
-
     let matchData = await sportList.findOne({ marketId: bodyData.marketId });
-
-
-
     if (!matchData) {
       return SendResponse(res, "error", "sport not found");
     }
-
-
     let marketData = await sportsMarketListModel.findOne({
       marketId: bodyData.betfairMarketId
     })
-
-
     let decisionSelectionId = bodyData.decisionSelectionId;
-
-
-
     await DecisionService.oddsDecision(
       matchData,
       "",
       decisionSelectionId,
       bodyData.betfairMarketId
     );
-
     return SendResponse(res, "success", "decision done successfully");
   } catch (error) {
     console.error("Error in oddsDecision:", error);
@@ -6308,7 +6307,7 @@ const userCommissionCoinsInsert = async (
           marketId: marketId,
           sportsType: "cricket",
           gameType: "cricket",
-          remark: `User Comm For Match - (${matchData.matchName})}`,
+          remark: msg("decision.oddsCommRemark", { matchName: matchData.matchName }),
           userRemark: `User Comm For Match - (${matchData.matchName})`,
           statementFor: `userComm`,
           isComm: true,
@@ -6417,7 +6416,7 @@ const userCommissionCoinsInsert = async (
       finalInsertStatement.push(userData);
     });
   
-  _d(finalInsertStatement , "finalInsertStatement")
+ // _d(finalInsertStatement , "finalInsertStatement")
   
     await StatementModel.deleteMany({
       marketId: marketId,

@@ -22,7 +22,7 @@ const {
 const {
   _dx,
   _d,
-  onlyOwerPermit,
+  onlyOwnerPermit,
   whereHelper,
   casinoShareArray,
   _date,
@@ -44,7 +44,6 @@ const TransactionLogModel = require("../../Models/TransactionLog.model");
 const crickTransactionLogModel = require("../../Models/crickTransaction.model");
 const ActivityModel = require("../../Models/Activity.model");
 const axios = require("axios");
-const { json } = require("body-parser");
 const { ObjectId } = require("mongodb");
 const MlmChainListModel = require("../../Models/BtoC/mlmChainList.model");
 const CrickTransactionLogModel = require("../../Models/crickTransaction.model");
@@ -1163,7 +1162,7 @@ module.exports = {
           errorMessages
         );
       }
-      const owner = await onlyOwerPermit(loggedInData);
+      const owner = onlyOwnerPermit(loggedInData);
       if (!owner) {
         return SendResponse(
           res,
@@ -1185,7 +1184,7 @@ module.exports = {
   domainList: async (req, res) => {
     const loggedInData = req.loggedInUser;
     try {
-      const owner = await onlyOwerPermit(loggedInData);
+      const owner = onlyOwnerPermit(loggedInData);
       if (!owner) {
         return SendResponse(
           res,
@@ -1203,7 +1202,7 @@ module.exports = {
   saveNotification: async (req, res) => {
     const loggedInData = req.loggedInUser;
     try {
-      const owner = await onlyOwerPermit(loggedInData);
+      const owner = onlyOwnerPermit(loggedInData);
       if (!owner) {
         return SendResponse(
           res,

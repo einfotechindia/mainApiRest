@@ -7,21 +7,15 @@ const crypto = require("crypto");
 const helmet = require("helmet");
 const compression = require('compression');
 const hpp = require('hpp');
-const xss = require('xss-clean');
 const mongoSanitize = require('express-mongo-sanitize');
 const app = express();
 const server = http.createServer(app);
 const db = require("./Models/Connection");
 const { initializeSocket } = require("./socket");
-const securityGuard = require("./Middlewares/securityGuard");
+const { securityGuard } = require("./Middlewares/securityGuard");
 const decruptPayload = require("./Middlewares/decruptPayload");
 
 const isProd = process.env.NODE_ENV === 'production';
-
-const cloudflareIPResolver = require('./DDOS/cloudflareIPResolver');
-const ddosProtection = require('./DDOS/ddosProtection');
-const advancedRateLimiter = require('./DDOS/advancedRateLimiter');
-const connectionGuard = require('./DDOS/connectionGuard');
 const healthRoutes = require('./DDOS/healthCheck');
 
 
@@ -52,12 +46,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// const cloudflareBlocker = require('./DDOS/cloudflareBlocker');
-// app.use(cloudflareIPResolver);
-// app.use(ddosProtection);
-// app.use(advancedRateLimiter);
-// app.use(connectionGuard);
-
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -81,7 +69,6 @@ app.use(helmet({
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
 app.use(hpp());
-app.use(xss());
 app.use(mongoSanitize());
 
 
@@ -106,7 +93,6 @@ const corsOptions = {
   optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
-app.set("view engine", "ejs");
 app.use(compression());
 app.use(express.static(path.join(__dirname, "public"), {
   maxAge: '1d',
@@ -116,13 +102,9 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(decruptPayload);
 
-
-
-
 // [Feature 4] Smart Sanitization — sensitive fields (password, token, otp) skip
 const SENSITIVE_KEYS = new Set(['password', 'pass', 'pwd', 'token', 'auth', 'authorization', 'otp', 'pin', 'secret', 'newPassword', 'oldPassword', 'confirmPassword']);
 app.use((req, res, next) => {
-
   const sanitize = (obj) => {
     if (!obj || typeof obj !== 'object') return;
     for (const key of Object.keys(obj)) {
@@ -140,11 +122,6 @@ app.use((req, res, next) => {
   sanitize(req.params);
   next();
 });
-
-
-
-
-// Health check — securityGuard se pehle taaki load balancer fail na ho
 app.use(healthRoutes);
 
 // ==========================================
@@ -183,6 +160,8 @@ const operatingRoutes = require("./Routes/Operating.route");
 const centerPanelRoutes = require("./Routes/CenterPanel/CenterPanel.route");
 const radheRoutes = require("./Routes/radhe.route");
 const fancyManagerRoutes = require("./Routes/FancyManager/FancyManager.route");
+const bethubRoutes = require("./Routes/bethub.route");
+const cronRoutes = require("./Routes/cron.route");
 
 app.use("/v1/user", UserRoutes);
 app.use("/v1/sports", BetRoutes);
@@ -190,16 +169,9 @@ app.use("/v1/casino", DiamondCasinoRoutes);
 app.use("/v1/decision", DecisionRoutes);
 app.use("/v1/website", WebsiteRoutes);
 app.use("/v1/reports", ReportsRoutes);
-app.use("/v1/bsfReports", bsfReports);
-app.use("/v1/bluexchReports", bluexchReports);
 app.use("/v1/qtech", qtechRoutes);
 app.use("/v1/matka", matkaRoutes);
-app.use("/v1/daman", damanRoutes);
-app.use("/v1/crick365", crick365Routes);
-app.use("/v1/bpexch", bpexchRoutes);
-app.use("/v1/halkabhari", halkabhariRoutes);
 app.use("/v1/dashboard", dashboardRoutes);
-app.use("/v1/diamond", diamondRoutes);
 app.use("/v1/payment", paymentRoutes);
 app.use("/v1/userReport", userReportRoutes);
 app.use("/v1/paymentAccount", paymentAccountRoutes);
@@ -212,10 +184,20 @@ app.use("/v1/subagent", subAgentRoutes);
 app.use("/v1/cloudflare", cloudflareRoutes);
 app.use("/v1/operating", operatingRoutes);
 app.use("/v1/cp", centerPanelRoutes);
-app.use("/v1/radhe", radheRoutes);
 app.use("/v1/fancyManager", fancyManagerRoutes);
+// website According Routes
+app.use("/v1/bluexchReports", bluexchReports);
+app.use("/v1/bsfReports", bsfReports);
+app.use("/v1/daman", damanRoutes);
+app.use("/v1/crick365", crick365Routes);
+app.use("/v1/bpexch", bpexchRoutes);
+app.use("/v1/halkabhari", halkabhariRoutes);
+app.use("/v1/diamond", diamondRoutes);
+app.use("/v1/radhe", radheRoutes);
+app.use("/v1/bethub", bethubRoutes);
 
-
+// cronRoute
+app.use("/v2/cron", cronRoutes);
 
 
 
@@ -245,9 +227,9 @@ app.use((req, res) => {
 
 
 // Timeouts — Slowloris protection
-server.timeout = 300000;          // 5 min default — baaki sab routes ke liye
-server.keepAliveTimeout = 15000; // 15 sec — idle connection close
-server.headersTimeout = 20000;   // 20 sec — headers receive deadline
+server.timeout = 30000;           // 30s default — normal APIs
+server.keepAliveTimeout = 15000;  // 15s — idle connection close
+server.headersTimeout = 20000;    // 20s — headers receive deadline
 const PORT = process.env.PORT || 5001;
 
 // [Feature 6] DB await before start — pehle DB connect ho, phir server start
@@ -259,7 +241,6 @@ const PORT = process.env.PORT || 5001;
     server.listen(PORT, (error) => {
       if (!error) {
         console.log(`Server is running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
-        //cloudflareBlocker.start();
       } else {
         console.error('Failed to start server:', error);
         process.exit(1);
@@ -271,12 +252,40 @@ const PORT = process.env.PORT || 5001;
   }
 })();
 
-// Graceful shutdown
-// process.on('SIGTERM', () => {
-//   cloudflareBlocker.stop();
-//   server.close();
-// });
-// process.on('SIGINT', () => {
-//   cloudflareBlocker.stop();
-//   server.close();
-// });
+// ============================================================
+// GRACEFUL SHUTDOWN — clean close on restart/deploy
+// ============================================================
+const mongoose = require("mongoose");
+const { quitAll } = require("./Helpers/RedisHelper");
+
+const gracefulShutdown = async (signal) => {
+  console.log(`\n${signal} received. Shutting down gracefully...`);
+
+  // 1. Stop accepting new connections
+  server.close(() => {
+    console.log("HTTP server closed.");
+  });
+
+  // 2. Close MongoDB
+  try {
+    await mongoose.connection.close();
+    console.log("MongoDB connection closed.");
+  } catch (err) {
+    console.error("MongoDB close error:", err.message);
+  }
+
+  // 3. Close Redis
+  try {
+    await quitAll();
+    console.log("Redis connections closed.");
+  } catch (err) {
+    console.error("Redis close error:", err.message);
+  }
+
+  console.log("Shutdown complete.");
+  process.exit(0);
+};
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+

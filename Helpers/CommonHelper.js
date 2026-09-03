@@ -1010,12 +1010,8 @@ const parentDataAppend = async (userData, insertData) => {
   return returnData;
 };
 
-const onlyOwerPermit = async (userData) => {
-  let returnData = false;
-  if (userData.userType == "owner") {
-    returnData = true;
-  }
-  return returnData;
+const onlyOwnerPermit = (userData) => {
+  return userData.userType === "owner";
 };
 
 const areObjectsEqual = async (obj1, obj2) => {
@@ -1035,7 +1031,7 @@ const areObjectsEqual = async (obj1, obj2) => {
   return true;
 };
 
-const arrayToChunk = (arr, size = SETTING.CHUNK_SIZE) => {
+const arrayToChunk = (arr, size = 500) => {
   return arr.reduce(
     (acc, _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]),
     []
@@ -2110,7 +2106,7 @@ module.exports = {
   oddsCommissionHelper,
   convertKeyObjectAndSeperateid,
   parentDataAppend,
-  onlyOwerPermit,
+  onlyOwnerPermit,
   areObjectsEqual,
   arrayToChunk,
   sleep,

@@ -267,4 +267,6 @@ const securityGuard = (req, res, next) => {
   }
 };
 
-module.exports = securityGuard;
+const { isLikelyBot } = require("../Helpers/BotDetector");
+
+module.exports = { securityGuard, isLikelyBot };

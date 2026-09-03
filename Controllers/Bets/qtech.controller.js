@@ -16,7 +16,6 @@ const UserModel = require("../../Models/User/User.model");
 const TransactionLogModel = require("../../Models/TransactionLog.model");
 const qtechGamesModel = require("../../Models/qtech.model");
 const axios = require("axios");
-const { json } = require("body-parser");
 const { ObjectId } = require("mongodb");
 const InternationalCasinoBetsModel = require("../../Models/BetsList/InternationalCasinoBetsList.model");
 const { InsertUserStatement } = require("../../Helpers/StatementHelper");
@@ -189,7 +188,7 @@ const qtechBalance = async (req, res) => {
 
     let casinoToken = user.casinoToken;
 
-    _d(casinoToken);
+    //_d(casinoToken);
 
     // if (casinoToken != bodyData.token) {
     //   return sendCasinoResponse(res, "token_not_found", 0);

@@ -30,6 +30,9 @@ const {
 } = require("../../Helpers/RedisHelper");
 const { getUserCoinsByTransactionTable } = require("../../Helpers/TransactionHelper")
 
+
+const { GetFromRedis } = require("../FancyManager/FancyManager.service.js")
+
 const {
   _dx,
   _d,
@@ -44,7 +47,6 @@ const {
   getSettingData,
   getTimeDifference
 } = require("../../Helpers/CommonHelper");
-const { json } = require("body-parser");
 const { TRUE } = require("../../utils/constants");
 const { emitToUser , emitToAllActiveUsers } =  require("../../socket.js")
 
@@ -129,7 +131,7 @@ const saveOpenBets = async (bodyData, matchData) => {
   let oldPopenBetsPositionarrss = Object.values(openBetsPosition);
   let openBetsPositionAmountMin = Math.min(...oldPopenBetsPositionarrss);
 
-  let placedMatchBets = await OpenBestModel.find({ marketId: marketId, userId: clientId })
+  let placedMatchBets = await OpenBestModel.find({ marketId: marketId, userId: clientId }).lean()
 
   if (!placedMatchBets) {
     placedMatchBets = []
@@ -193,7 +195,7 @@ const saveOpenBets = async (bodyData, matchData) => {
 
 
 const getNewOpenBetsPosition = async (userId, marketId) => {
-  let openBets = await OpenBestModel.find({ marketId: marketId, userId: userId })
+  let openBets = await OpenBestModel.find({ marketId: marketId, userId: userId }).lean()
   if (!openBets) {
     openBets = []
   } else {
@@ -302,25 +304,41 @@ const checkLiveMatchOdds = async (reqData, oddsRange = 0 , isCombinedNew = false
   let fancyType = "Normal"
   let gtype = "fancy"
   let isCombined = reqData.isCombined ? true : false
-
-  if (reqData && reqData.fancyType && reqData.fancyType != "") {
-    fancyType = reqData.fancyType
-  }
-
+  let fancyCall = false
+  
   if (reqData && reqData.gtype && reqData.gtype != "") {
     gtype = reqData.gtype
   }
+
+  if (betFor === "fancy" && (gtype == "fancy" || gtype == "betfair")) {
+    fancyCall =  true 
+  }
+      
   let oddsUrl = `${siteSetting.checkMatchDataUrl}${marketId}`;
 
-  let [matchData, settingData] = await Promise.all([
+  let fetchArray = [
     sportByMarketId(marketId),
     getSettingData(),
-  ]);
+  ]
 
+  if (fancyCall) {
+    fetchArray.push(GetFromRedis())
+  }
+
+  let [matchData, settingData, fancyManager] = await Promise.all(fetchArray);
+  
   if (!matchData) {
     return returnResponse(
       "error",
       "Something Went Wrong ! We are not getting match data"
+    );
+  }
+
+
+  if (matchData && matchData.status != "INPLAY") {
+    return returnResponse(
+      "error",
+      "Match Is Not Inplay Either It Will Be Completed Or Removed"
     );
   }
 
@@ -382,22 +400,21 @@ const checkLiveMatchOdds = async (reqData, oddsRange = 0 , isCombinedNew = false
    }
   
   
-
+  
+  
   let fetchFromRedis = false
   if (settingData.isBookmakerRedis && (betFor === "odds" || betFor == "toss" || betFor === "fancy")) {
     fetchFromRedis = true
   }
 
-  if (settingData.isBetFairRedis && (betFor === "matchOdds" || betFor == "tiedMatch" || betFor == "Over/Under 1.5 Goals" || betFor == "Over/Under 2.5 Goals" | betFor == "To Win the Toss")) {
+  if (settingData.isBetFairRedis && (betFor === "matchOdds" || betFor == "tiedMatch" || betFor == "Over/Under 1.5 Goals" || betFor == "Over/Under 2.5 Goals" || betFor == "To Win the Toss")) {
     fetchFromRedis = true
   }
 
 
-
-
-
   const defaultBetDelay = Number(matchData.betDelayTime) || 0;
   const betDelaySetting = matchData.betDelaySetting ?? {};
+
   const betDelayKeyByBetFor = {
     fancy: "fancyBetDelay",
     toss: "tossBetDelay",
@@ -406,6 +423,7 @@ const checkLiveMatchOdds = async (reqData, oddsRange = 0 , isCombinedNew = false
     odds: "bookMakerBetDelay",
     line:"lineMarketfancyBetDelay"
   };
+
   const chosenKey = isLineMarket ? betDelayKeyByBetFor["line"] : betDelayKeyByBetFor[reqData.betFor];
   let betDelayTime = Number(defaultBetDelay);
   if (chosenKey && isFinite(Number(betDelaySetting[chosenKey]))) {
@@ -421,6 +439,7 @@ const checkLiveMatchOdds = async (reqData, oddsRange = 0 , isCombinedNew = false
     await sleep(betDelayTime * 1000);
   }
   
+
 
 const playStatusKey = Object.hasOwn(finalMarketData, "playStatus");
 
@@ -454,8 +473,8 @@ if (isBetfairFlag && finalMarketData && !finalMarketData.playStatus  && playStat
       if (oddsData) {
         oddsData = { result: oddsData }
       }
-    } else if (betFor === "matchOdds" || betFor == "tiedMatch" || betFor == "Over/Under 1.5 Goals" || betFor == "Over/Under 2.5 Goals" | betFor == "To Win the Toss") {
-      oddsData = await getBetfairMarketDataByRedis(marketId)
+    } else if (betFor === "matchOdds" || betFor == "tiedMatch" || betFor == "Over/Under 1.5 Goals" || betFor == "Over/Under 2.5 Goals" || betFor == "To Win the Toss") {
+      oddsData = await getBetfairMarketDataByRedis(reqData?.betfairMarketId)
       if (oddsData) {
         oddsData = {
           message: 'data fetched',
@@ -483,6 +502,9 @@ if (isBetfairFlag && finalMarketData && !finalMarketData.playStatus  && playStat
 
   let coinsSetting = {};
   let maxMinCoins = matchData?.maxMinCoins
+
+
+
   
 try {
     if (maxMinCoins && typeof maxMinCoins === "string") {
@@ -601,21 +623,18 @@ try {
     oddsData = oddsData.result;
     const oddsType = reqData.oddsType;
 
-
-
     if (oddsType == "bookmaker") {
       if (type != "K" && type != "k" && type != "L") {
         return returnResponse("error", "odds Expire due to wrong type");
       }
 
       checkOddsData = oddsData.team_data;
-
       sendOddsData = convertKeyObject(checkOddsData, "selectionid");
-
       finalOddsData = sendOddsData[selectionId + ""];
 
       const currentLaggai = parseFloat(finalOddsData.lgaai);
       let currentKhaai = parseFloat(finalOddsData.khaai);
+      
 
       if (
         matchData.bookmakerRange &&
@@ -731,11 +750,11 @@ try {
     }
 
   } else if (betFor === "fancy" && (gtype == "fancy" || gtype == "betfair")) {
+    
     oddsData = oddsData.result
     let run = reqData.run;
     let sessionData = oddsData.session;
 
-    // _d(oddsData.session , "oddsData.session")
     if (gtype == "betfair") {
       sessionData = oddsData.lineMarketData
     }
@@ -744,6 +763,7 @@ try {
     }
 
     let finalSessionData = [];
+
 
     if (sessionData[selectionId + ""]) {
       finalSessionData = sessionData[selectionId + ""];
@@ -766,6 +786,30 @@ try {
     ) {
       sessionMaxAmount = Math.round(finalSessionData.max);
     }
+
+    let fancyStatus = true
+    if (fancyManager && fancyManager.length > 0) {
+      const matchedManager = fancyManager.find(manager =>
+        manager.keywords?.some(keyword => {
+          const regex = new RegExp(
+            `\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
+            'i'
+          );
+          return regex.test(finalSessionData.session_name);
+        })
+      );
+      if (matchedManager) {
+        sessionMaxAmount = Number(matchedManager.maxBet)
+        finalSessionData.com_perm = matchedManager.commission ? "YES" : "NO"
+        if (!matchedManager.status) {
+          fancyStatus = false
+        }
+      }
+    }
+    if (!fancyStatus) {
+      return returnResponse("error", `bet not allowed in this session ${finalSessionData.session_name}`);
+    }
+
 
     if (betAmount > sessionMaxAmount) {
       status = "error";
@@ -795,7 +839,6 @@ try {
       finalSessionData.oddsYes = 1
     }
 
- 
     if (
       run < 1 ||
       odds == 0 
@@ -816,9 +859,6 @@ try {
       message = `odds expire`;
       return returnResponse(status, message);
     }
-
-
-
 
     if (
       (finalSessionData.runsNo < 1 ||
@@ -859,8 +899,6 @@ try {
     }
 
     oddsData = oddsData[0];
-
-
     if (oddsData.marketId) {
       betfairMarketId = oddsData.marketId
     }
@@ -870,6 +908,7 @@ try {
       return returnResponse("error", "market Is Not Open");
     }
 
+   
 
     if (oddsData.marketId != reqData.betfairMarketId) {
       return returnResponse("error", "something wrong in betfair marketId");
@@ -929,10 +968,11 @@ try {
       }
 
       let teamName = odds.team_name
-      if (matchData.sportId == 1 && /goals?/i.test(teamName)) {
+      if (matchData.sportId == 1 && /goals?/i.test(teamName) && isBetfairFlag && finalMarketData && !finalMarketData.maxBet) {
         oddsMaxAmount = settingData && settingData.maxFootballGoalLineAmt ? settingData.maxFootballGoalLineAmt : oddsMaxAmount
       }
-      
+
+
       if (betAmount > oddsMaxAmount) {
         status = "error";
         message = `Maximum Odds Amount Is Acceptable Is ${oddsMaxAmount}`;
@@ -1096,7 +1136,7 @@ const checkUserData = async (userId) => {
       otp: 0,
       referral: 0,
     }
-  );
+  ).lean();
   if (!userData) {
     return returnResponse(
       "error",
@@ -1113,64 +1153,6 @@ const updatePlayModel = async (clientId, marketId, updateObject) => {
   );
 };
 
-// const checkPlayDataMarketWise = async (userData, marketId, type = "odds") => {
-//   let playData = {};
-//   try {
-//     const key = `playDataByMarketId_${marketId}_${userData._id}`;
-//     let redisPlayData = await client.get(key);
-//     if (redisPlayData && redisPlayData != null && redisPlayData != "") {
-//       return JSON.parse(redisPlayData);
-//     }
-
-//     playData = await PlayModel.findOne({
-//       userId: userData._id,
-//       marketId: marketId,
-//     });
-
-
-//     if (!playData) {
-
-//       let [shareData, directUserShareData] = await Promise.all([
-//         ShareModel.findOne({ userId: userData._id }),
-//         directUserShareModel.findOne({ userId: userData._id }),
-//       ])
-
-//       //const shareData = await ShareModel.findOne({ userId: userData._id });
-//       const matchShareData = getClientShareArray(shareData, "match", userData);
-//       playData = {
-//         marketId: marketId,
-//         ownerId: userData.ownerId,
-//         subownerId: userData.subownerId,
-//         adminId: userData.adminId,
-//         superadminId: userData.superadminId,
-//         superagentId: userData.superagentId,
-//         subadminId: userData.subadminId,
-//         masterId: userData.masterId,
-//         agentId: userData.agentId,
-//         clientId: userData.clientId,
-//         userId: userData._id,
-//         parentData: userData?.parentData,
-//         playStatus: 1,
-//         shareData: JSON.stringify(matchShareData.matchShareArray),
-//         userInfo: {
-//           username: userData.username,
-//           name: userData.name,
-//         },
-//         directUserShareData: JSON.stringify(directUserShareData?.shareData)
-//       };
-//       if (type == "odds") {
-//         playData.isMatchPlay = true
-//       }
-//       await PlayModel.create(playData);
-//     }
-//     await client.set(key, JSON.stringify(playData))
-//     return playData;
-//   } catch (error) {
-//     console.log("checkPlayDataMarketWise Error", error);
-//     return playData;
-//   }
-// };
-
 
 const checkPlayDataMarketWise = async (userData, marketId, type = "odds") => {
   let playData = {};
@@ -1183,8 +1165,8 @@ const checkPlayDataMarketWise = async (userData, marketId, type = "odds") => {
     }
 
     let [shareData, directUserShareData] = await Promise.all([
-      ShareModel.findOne({ userId: userData._id }),
-      directUserShareModel.findOne({ userId: userData._id }),
+      ShareModel.findOne({ userId: userData._id }).lean(),
+      directUserShareModel.findOne({ userId: userData._id }).lean(),
     ]);
 
     const matchShareData = getClientShareArray(
@@ -1399,11 +1381,13 @@ const getFancyBetList = async (
         .select(specificObj)
         .sort(sortObj)
         .skip(bodyData.size * (bodyData.pageNo - 1))
-        .limit(bodyData.size);
+        .limit(bodyData.size)
+        .lean();
     } else {
       sessionData = await FancyBetModel.find(where)
         .select(specificObj)
-        .sort(sortObj);
+        .sort(sortObj)
+        .lean();
     }
     return sessionData;
   } catch (error) {
@@ -1421,9 +1405,10 @@ const getOddsBetList = async (where, specific, bodyData = {}) => {
         .select(specific)
         .sort({ _id: -1 })
         .skip(bodyData.size * (bodyData.pageNo - 1))
-        .limit(bodyData.size);
+        .limit(bodyData.size)
+        .lean();
     } else {
-      return await BetModel.find(where).select(specific).sort({ _id: -1 });
+      return await BetModel.find(where).select(specific).sort({ _id: -1 }).lean();
     }
   } catch (error) {
     console.log("fetching Odds Bet List Error In Bet Service", error);
@@ -1437,9 +1422,9 @@ const getCasinoBetList = async (where, specific) => {
     }
     let casinoBetData = {};
     if (specific) {
-      casinoBetData = await CasinoBetModel.find(where).select(specific);
+      casinoBetData = await CasinoBetModel.find(where).select(specific).lean();
     } else {
-      casinoBetData = await CasinoBetModel.find(where);
+      casinoBetData = await CasinoBetModel.find(where).lean();
     }
     return casinoBetData;
   } catch (error) {
@@ -1449,9 +1434,9 @@ const getCasinoBetList = async (where, specific) => {
 
 const getPlayData = async (where, specific, all) => {
   if (!all) {
-    return await PlayModel.findOne(where).select(specific);
+    return await PlayModel.findOne(where).select(specific).lean();
   } else {
-    return await PlayModel.find(where).select(specific);
+    return await PlayModel.find(where).select(specific).lean();
   }
 };
 
@@ -1584,7 +1569,7 @@ const getMatchList = async (marketId) => {
         status: {
           $in: ["INPLAY", "UPCOMING"],
         },
-      });
+      }).lean();
       if (siteSetting.IS_REDIS) {
         await setSportsInRedis(returnData);
       }
@@ -1872,7 +1857,7 @@ const loginReportsByMarketId = async (where) => {
       parentData: 1,
       createdAt: 1,
       userInfo: 1,
-    });
+    }).lean();
     let pushArray = [];
     loggedInUser.map((data) => {
       pushArray.push(data);
@@ -2023,7 +2008,7 @@ const saveSportsListByNewCenterPanel = async () => {
 
 
     let matchResponceData = {}
-    let betfairResponceDataExceptMatch = {}
+    let betfairResponceDataExceptMatch = []
 
     let [matchData, betfairSportsDataExceptMatch, racingData] = await Promise.all([
       axios.get(matchHitUrl),
@@ -2032,22 +2017,32 @@ const saveSportsListByNewCenterPanel = async () => {
     ])
 
 
-    if (matchData?.data?.data) {
+    if (matchData?.data?.data && settingData.isCricket) {
       let matchRes = matchData?.data?.data
       matchResponceData = matchRes.filter(
         (item) => item.sportId === 4
       );
     }
 
-
+    
     if (betfairSportsDataExceptMatch?.data?.data) {
       const betfairRes = betfairSportsDataExceptMatch.data.data;
-      betfairResponceDataExceptMatch = betfairRes.filter(
-        (item) => ![4, '4'].includes(item.sportId)
-      );
+      betfairRes.map((listData) => {
+          if (listData.sportId != 4) {
+            let insert = true
+            if (listData.sportId == 2 && !settingData.isTennis) {
+              insert = false
+            }
+            if (listData.sportId == 1 && !settingData.isFootball) {
+              insert = false
+            }
+
+          if (insert) {
+            betfairResponceDataExceptMatch.push(listData)
+          }
+        }
+      })
     }
-
-
 
     await Promise.all([
       saveSportsData(matchResponceData, settingData),
@@ -2067,6 +2062,7 @@ const saveSportsListByNewCenterPanel = async () => {
 };
 
 const saveSportsData = async (sportData, settingData) => {
+
   if (sportData) {
     await Promise.all(
       sportData.map(async (value, key) => {
@@ -2212,6 +2208,7 @@ const saveSportsData = async (sportData, settingData) => {
             { upsert: true }
           );
         }
+
       }));
   }
 

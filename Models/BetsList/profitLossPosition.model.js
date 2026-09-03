@@ -307,6 +307,15 @@ const ProfitLossPositionModel = mongoose.model(
           marketId: 1,
         },
       },
+      // Missing — Reports aggregation uses these userType+marketId combos
+      { key: { masterId: 1, marketId: 1 } },
+      { key: { subadminId: 1, marketId: 1 } },
+      { key: { adminId: 1, marketId: 1 } },
+      { key: { superadminId: 1, marketId: 1 } },
+      { key: { subownerId: 1, marketId: 1 } },
+      { key: { ownerId: 1, marketId: 1 } },
+      // Date+isDeclare+isCasino — decision deleteMany
+      { key: { date: 1, isDeclare: 1, isCasino: 1 } },
     ];
 
     for (const index of neededIndexes) {

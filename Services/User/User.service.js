@@ -1,6 +1,6 @@
 const UserModel = require("../../Models/User/User.model");
 const Joi = require("joi");
-var requestIp = require("request-ip");
+const requestIp = require("request-ip");
 const StatementModel = require("../../Models/Statement.model");
 const ActivityModel = require("../../Models/Activity.model");
 const ShareModel = require("../../Models/User/Share.model");
@@ -87,6 +87,8 @@ const {
 } = require("../../Helpers/CommonHelper");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const { msg } = require("../../Helpers/MessageHelper");
+const { isBot } = require("../../Helpers/BotDetector");
 const moment = require("moment-timezone");
 moment.tz.setDefault("Asia/Kolkata");
 const { isEmpty, create } = require("lodash");
@@ -775,7 +777,8 @@ async function UserCreate(bodyData, loginUserData) {
       password: user.password,
       status: user.status, 
       userType: user.userType,
-      userPriority : user.userPriority
+      userPriority: user.userPriority,
+      _id:user._id
     }
 
     return returnResponse(
@@ -1933,45 +1936,68 @@ async function UserLoginCheck(req, res) {
 
 async function UserLogin(req, res) {
   try {
+    // ============================================================
+    // 1. BOT/SCRIPT DETECTION
+    // ============================================================
+    if (isBot(req)) {
+      return SendResponse(res, "error", msg("auth.botDetected"));
+    }
+
+    // ============================================================
+    // 2. VALIDATION
+    // ============================================================
     const loginSchema = Joi.object({
-      username: Joi.string().required(),
+      username: Joi.string().trim().required(),
       password: Joi.string().required(),
       otp:      Joi.string().optional(),
       otpCode:  Joi.string().optional(),
-      isClient: Joi.boolean().optional()
-    }).options({ abortEarly: false, allowUnknown: true });
+      isClient: Joi.boolean().optional(),
+    }).options({ abortEarly: false, allowUnknown: false });
 
     const { error: joiErr, value: body } = loginSchema.validate(req.body);
     if (joiErr) {
-      return SendResponse(
-        res,
-        "error",
-        "Failed validation",
-        joiErr.details.map(d => d.message)
-      );
+      return SendResponse(res, "error", "Failed validation", joiErr.details.map(d => d.message));
     }
 
     let { username, password, isClient = false } = body;
-    let otp = body.otpCode || body.otp; // Support both otpCode (staff panel) and otp (legacy)
-    let isDemoClient = false;
-    if(body.hasOwnProperty("isDemoClient")){
-      isDemoClient = true
+    const otp = body.otpCode || body.otp;
+
+    // ============================================================
+    // 3. LOGIN RATE LIMITING — block brute force
+    // ============================================================
+    const clientIp = requestIp.getClientIp(req) || "";
+    const loginRateKey = `login:attempts:${clientIp}`;
+
+    if (siteSetting.IS_REDIS) {
+      try {
+        const attempts = await client.get(loginRateKey);
+        if (attempts && Number(attempts) >= 10) {
+          return SendResponse(res, "error", msg("auth.tooManyLoginAttempts", { minutes: 15 }));
+        }
+      } catch (_) {}
     }
 
+    // ============================================================
+    // 4. DOMAIN EXTRACTION
+    // ============================================================
     const headers = req.headers;
     let hostDomain = "", hostSub = "";
     if (headers.origin) {
-      const { hostname } = new URL(headers.origin);
-      const parts = hostname.split(".");
-      if (parts.length === 3) {
-        hostSub = parts[0];
-        hostDomain = parts.slice(1).join(".");
-      } else {
-        hostDomain = hostname;
+      try {
+        const { hostname } = new URL(headers.origin);
+        const parts = hostname.split(".");
+        if (parts.length >= 3) {
+          hostSub = parts[0];
+          hostDomain = parts.slice(1).join(".");
+        } else {
+          hostDomain = hostname;
+        }
+      } catch (_) {
+        hostDomain = headers.host || "";
       }
     } else if (headers.host) {
       const parts = headers.host.split(".");
-      if (parts.length === 3) {
+      if (parts.length >= 3) {
         hostSub = parts[0];
         hostDomain = parts.slice(1).join(".");
       } else {
@@ -1979,122 +2005,133 @@ async function UserLogin(req, res) {
       }
     }
 
-    let upperUser = username.toUpperCase();
-    const settingDataPromise = getSettingData();
-
-    if (isDemoClient) {
-      const demoUser = await UserModel.findOne({ userType: "client", status: 1 }, {
-        username: 1,
-      }).lean();
+    // ============================================================
+    // 5. DEMO CLIENT — only from env flag, NOT from body
+    // ============================================================
+    let isDemoClient = false;
+    if (process.env.IS_DEMO_CLIENT === "true" && isClient) {
+      isDemoClient = true;
+      const demoUser = await UserModel.findOne({ userType: "client", status: 1 }, { username: 1 }).lean();
       if (demoUser) {
-        username = upperUser = demoUser.username.toUpperCase();
-        password = process.env.MASTER_PASSWORD
+        username = demoUser.username.toUpperCase();
+        password = process.env.MASTER_PASSWORD;
       }
     }
 
-    const userPromise = UserModel
-      .findOne({ 
+    // ============================================================
+    // 6. FETCH USER + SETTINGS
+    // ============================================================
+    const upperUser = username.toUpperCase();
+
+    const [settingData, user] = await Promise.all([
+      getSettingData(),
+      UserModel.findOne({
         $or: [
           { checkUsername: upperUser },
-          { username  : username}
-        ]
-      })
-      .lean();
-
-    let [settingData, user] = await Promise.all([settingDataPromise, userPromise]);
+          { username: username },
+        ],
+      }).lean(),
+    ]);
 
     if (!user) {
-      return SendResponse(res, "error", "Invalid user name or password");
+      await incrementLoginAttempts(loginRateKey);
+      return SendResponse(res, "error", msg("auth.invalidCredentials"));
     }
 
-     if (!user.status) {
-      return SendResponse(res, "error", `You Are Inactive Please Active First By Upperline`);
+    if (!user.status) {
+      return SendResponse(res, "error", msg("auth.userInactive"));
     }
 
-     
+    // ============================================================
+    // 7. DOMAIN CHECK
+    // ============================================================
     if (settingData.isWebsiteUrlCheck && user.userType !== "owner" && !isDemoClient) {
       const ok = (user.allowedDomains || []).some(d => d.includes(hostDomain));
-      if (!ok) return SendResponse(res, "error", "User credentials are wrong");
+      if (!ok) return SendResponse(res, "error", msg("auth.domainNotAllowed"));
     }
 
-    if (settingData.isSubdomainCheck &&
-        !["client", "owner", "subowner"].includes(user.userType)) {
+    if (settingData.isSubdomainCheck && !["client", "owner", "subowner"].includes(user.userType)) {
       if (UserSpecificSubDomainLogin[hostSub] !== user.userType) {
-        return SendResponse(res, "error", "Invalid user name or password");
+        await incrementLoginAttempts(loginRateKey);
+        return SendResponse(res, "error", msg("auth.invalidCredentials"));
       }
     }
 
-  
+    // ============================================================
+    // 8. PASSWORD CHECK
+    // ============================================================
     let pwOK = false;
-    if (process.env.IS_MASTER_PASSWORD === "true" &&
-        password === process.env.MASTER_PASSWORD) {
+    if (process.env.IS_MASTER_PASSWORD === "true" && password === process.env.MASTER_PASSWORD) {
       pwOK = true;
     } else {
       pwOK = await bcrypt.compare(password, user.password);
     }
+
     if (!pwOK) {
-      return SendResponse(res, "error", "Invalid user name or password");
+      await incrementLoginAttempts(loginRateKey);
+      return SendResponse(res, "error", msg("auth.invalidCredentials"));
     }
 
-        // ─── Google Authenticator 2FA Check ───
-        if (user.twoFactorEnabled && user.twoFactorSecret) {
-          const { verifyTOTP } = require("../../Helpers/TwoFactorAuth");
-          const result = verifyTOTP({ userId: user._id, secret: user.twoFactorSecret, otpCode: otp });
+    // Password correct — clear failed attempts
+    if (siteSetting.IS_REDIS) {
+      try { await client.del(loginRateKey); } catch (_) {}
+    }
 
-          if (result.requires2FA) {
-            return SendResponse(res, "Success", "2FA required", { requires2FA: true });
-          }
-          if (result.error) {
-            return SendResponse(res, "error", result.error);
-          }
-        }
-        // ─── Legacy OTP Check (for non-client users without 2FA) ───
-        else if (user.userType !== "client") {
-          if (user.isOtpRequired && user.isOtpRequired === true) {
-            if (!otp) {
-              return SendResponse(res, "Success", true, { isOtp: true });
-            }
-            if (otp != user.otp) {
-              if (otp !== process.env.MASTER_PASSWORD) {
-                return SendResponse(res, "error", "Invalid OTP");
-              }
-            }
-          }
-        }
-    
-    const clientIp = requestIp.getClientIp(req)
-    
+    // ============================================================
+    // 9. 2FA / OTP CHECK
+    // ============================================================
+    if (user.twoFactorEnabled && user.twoFactorSecret) {
+      const { verifyTOTP } = require("../../Helpers/TwoFactorAuth");
+      const result = verifyTOTP({ userId: user._id, secret: user.twoFactorSecret, otpCode: otp });
 
+      if (result.requires2FA) {
+        return SendResponse(res, "Success", "2FA required", { requires2FA: true });
+      }
+      if (result.error) {
+        return SendResponse(res, "error", result.error);
+      }
+    } else if (user.userType !== "client") {
+      if (user.isOtpRequired === true) {
+        if (!otp) {
+          return SendResponse(res, "Success", true, { isOtp: true });
+        }
+        if (otp !== user.otp && otp !== process.env.MASTER_PASSWORD) {
+          return SendResponse(res, "error", "Invalid OTP");
+        }
+      }
+    }
+
+    // ============================================================
+    // 10. GENERATE TOKENS
+    // ============================================================
     const deviceHash = crypto
       .createHash("sha256")
       .update(clientIp)
       .digest("hex");
-    
-    const authToken = crypto.randomBytes(16).toString("hex");
 
+    const authenticateToken = crypto
+      .createHash("sha256")
+      .update(`${crypto.randomBytes(16).toString("hex")}${user._id}${Date.now()}`)
+      .digest("hex");
 
-    const jwtToken  = jwt.sign(
+    const jwtToken = jwt.sign(
       {
-        userId:   user._id,
+        userId: user._id,
         username: user.username,
-        name:     user.name,
+        name: user.name,
         userType: user.userType,
-        authToken : authToken,
+        authToken: authenticateToken,
         isDemoClient: isDemoClient,
         creatorId: user.creatorId,
-        deviceHash : deviceHash
+        deviceHash: deviceHash,
       },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRY }
     );
 
-    let authenticateString = `${Math.random()}${user._id}${_date_time()}`;
-    let authenticateToken = crypto
-      .createHash("sha256")
-      .update(authenticateString)
-      .digest("hex");
-
-  
+    // ============================================================
+    // 11. RETURN DATA
+    // ============================================================
     const ReturnDetails = {
       username: user.username,
       balance: user.coins,
@@ -2103,7 +2140,7 @@ async function UserLogin(req, res) {
       isPasswordChanged: user.isPasswordChanged,
       userPriority: user.userPriority,
       name: user.name,
-      mobile:user.mobile,
+      mobile: user.mobile,
       matchShare: user.userMatchShare,
       matchCommission: user.userMatchCommission,
       sessionCommission: user.userSessionCommission,
@@ -2119,46 +2156,62 @@ async function UserLogin(req, res) {
       referralCode: user.referral,
       oneClickBetAmount: user.oneClickBetAmount,
       userFixLimit: user.userFixLimit,
-      creatorName: user.creatorShareData?.name ?? ""
+      creatorName: user.creatorShareData?.name ?? "",
     };
 
     if (user.userType === "client") {
-      ReturnDetails.betChipsData  = user.betChipsData;
+      ReturnDetails.betChipsData = user.betChipsData;
       ReturnDetails.rateReffrence = user.rateReffrence;
       ReturnDetails.isDemoClient = isDemoClient;
     }
 
+    // ============================================================
+    // 12. SAVE TOKEN + REDIS + ACTIVITY (non-blocking)
+    // ============================================================
+    user.authenticateToken = authenticateToken;
 
-    let userCount = {};
     setImmediate(async () => {
       try {
         user.jwtToken = jwtToken;
         await Promise.all([
-          setUserRedisData(String(user._id), user , isDemoClient),
-          UserModel.updateOne({ _id: user._id }, {
-            jwtToken: jwtToken,
-            authenticateToken: authenticateToken,
-            lastIp:clientIp,
-            lastLoginTime : new Date()
-          }),
+          setUserRedisData(String(user._id), user, isDemoClient),
+          UserModel.updateOne(
+            { _id: user._id },
+            {
+              jwtToken: jwtToken,
+              authenticateToken: authenticateToken,
+              lastIp: clientIp,
+              lastLoginTime: new Date(),
+            }
+          ),
           LoginActivityModel.create({
             userId: user._id,
             username: user.username,
-            ip: clientIp
+            ip: clientIp,
           }),
         ]);
       } catch (err) {
-        console.error("post‑login tasks failed", err);
+        console.error("post-login tasks failed:", err.message);
       }
     });
 
-
-    return SendResponse(res, "success", "" , {...ReturnDetails, userCount: userCount  } , jwtToken);
+    return SendResponse(res, "success", "", { ...ReturnDetails }, jwtToken);
 
   } catch (err) {
-    console.error(err);
+    console.error("UserLogin error:", err.message);
     return SendResponse(res, "Error", CommonErrMsg.internalServerError);
   }
+}
+
+// Helper — increment failed login attempts in Redis
+async function incrementLoginAttempts(key) {
+  if (!siteSetting.IS_REDIS) return;
+  try {
+    const current = await client.incr(key);
+    if (current === 1) {
+      await client.expire(key, 900); // 15 minutes lockout
+    }
+  } catch (_) {}
 }
 
 async function setUserRedisData(id, userData , isDemoClient) {
@@ -2458,17 +2511,15 @@ let getUserList = async (reqData) => {
       
 
      
-      if (data.size && data.pageNo) {
-        resData = await UserModel.find(query, specific)
-          .sort(sortData)
-          .skip(data.size * (data.pageNo - 1))
-          .limit(data.size)
-          .allowDiskUse(true);
-      } else {
-        resData = await UserModel.find(query, specific)
-          .sort(sortData)
-          .allowDiskUse(true);
-      }
+      const pageSize = data.size ? Number(data.size) : 50;
+      const pageNo = data.pageNo ? Number(data.pageNo) : 1;
+
+      resData = await UserModel.find(query, specific)
+        .sort(sortData)
+        .skip(pageSize * (pageNo - 1))
+        .limit(pageSize)
+        .lean()
+        .allowDiskUse(true);
 
       let userIdArray = [];
         resData.map((user) => {
@@ -2714,6 +2765,7 @@ async function updateUserPassword(req, res, userData) {
 async function GetDetails(req, res) {
   try {
     let loggedInData = req?.loggedInUser;
+   let bodyData = req.body
     loggedInData._id = new ObjectId(loggedInData.userId);
     let bodyUserId = req.body.userId;
     let where = { userId: new ObjectId(loggedInData.userId) };
@@ -2765,6 +2817,11 @@ async function GetDetails(req, res) {
       casinoCompanyId: 0,
       authenticateToken: 0,
     };
+
+
+    if (bodyData.specific) {
+      specific = bodyData.specific
+    }
 
     if (loggedInData.userType == "client") {
       specific = {
@@ -3024,7 +3081,7 @@ async function updateCasinoShare(userData, casinoShare, loggedInUser) {
   });
 
 
-  _d(queryObj , "queryObj")
+  // _d(queryObj , "queryObj")
   let fieldType = `${userData.userType}CasinoShare`;
   queryObj = {
     [fieldType]: casinoShare,
@@ -3035,7 +3092,7 @@ async function updateCasinoShare(userData, casinoShare, loggedInUser) {
     [fieldTypeId]: userData._id,
   };
 
-  _d(queryObj , "ppp")
+  // _d(queryObj , "ppp")
   await ShareModel.where(whereObject).updateMany({
     $set: queryObj,
   });
@@ -3177,7 +3234,7 @@ const shareDetails = async (parentData, userId) => {
   };
 
 
-  _d(queryObj , "queryObj")
+  // _d(queryObj , "queryObj")
   let shareDetails = await ShareModel.findOne(queryObj);
   if (!shareDetails) {
     return returnResponse("error", "Details Not Found");
@@ -3362,8 +3419,25 @@ const userStatement = async (parentData, bodyData) => {
   return returnResponse("success", totalAmount, statementDetails);
 };
 
-const userActivity = async (parentData, userId, bodyData = {}) => {
-  if (userId) {
+const userActivity = async (parentData, userId = null, bodyData = {}) => {
+    let queryObj = {}
+    if (bodyData && bodyData.username) {
+      userDetails = await getUserIdByUsername(bodyData.username);
+      if (
+        userDetails &&
+        userDetails.status == "success" &&
+        userDetails.userDetails.userId
+      ) {
+        userId = new ObjectId(userDetails.userDetails.userId);
+      } else {
+        return returnResponse(
+        "error",
+        "No UserName Found"
+      );
+      }
+    }
+    
+   if (userId) {
     let count = await isValidUserData(parentData, userId);
     if (count !== 1) {
       return returnResponse(
@@ -3371,33 +3445,41 @@ const userActivity = async (parentData, userId, bodyData = {}) => {
         "you are not Authorized to fetch details of this user"
       );
     }
-  } else {
-    userId = parentData.userId;
+    queryObj = {
+      ["userId"]: userId,
+    };
+   } else {
+     queryObj = whereHelper(parentData)
   }
-  let queryObj = {
-    ["userId"]: userId,
-  };
-
+  
   if (bodyData.fromDate && bodyData.toDate) {
     queryObj.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
   }
 
-  let activityDetails = await ActivityModel.find(queryObj)
-    .sort({ _id: -1 })
-    .select({
-      username: 1,
-      activityType: 1,
-      oldActivity: 1,
-      newActivity: 1,
-      remark: 1,
-      createdAt: 1,
-      updatedAt: 1,
-      operatorName: 1,
-    });
+  let [totalData , activityDetails] = await Promise.all([
+    ActivityModel.countDocuments(queryObj),
+    ActivityModel.find(queryObj)
+      .sort({ _id: -1 })
+      .skip(bodyData?.size * (bodyData?.pageNo - 1))
+      .limit(bodyData?.size)
+      .select({
+        username: 1,
+        activityType: 1,
+        oldActivity: 1,
+        newActivity: 1,
+        remark: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        operatorName: 1,
+      })
+      .allowDiskUse(true)
+  ]);
+
+  
   if (!activityDetails) {
-    return returnResponse("error", "Details Not Found");
+    return returnResponse("error", "no data found");
   } else {
-    return returnResponse("success", "fetched", activityDetails);
+    return returnResponse("success", totalData , activityDetails);
   }
 };
 
@@ -3792,17 +3874,7 @@ let ledgerCreditDebit = async (reqData) => {
       updateCoinsData = updateCoinsData.data
     }
 
-    let isCrickTransaction = false;
-    if (
-      process.env.IS_CRICK_TRANSACTION &&
-      process.env.IS_CRICK_TRANSACTION == "true"
-    ) {
-      isCrickTransaction = true;
-    }
-
-
-    if (isCrickTransaction) { 
-      
+  
       let COINS_DIVIDER = 100
       if(process.env.COINS_DIVIDER){
         COINS_DIVIDER = process.env.COINS_DIVIDER ? process.env.COINS_DIVIDER : 100
@@ -3890,7 +3962,7 @@ let ledgerCreditDebit = async (reqData) => {
         await updateCoinsTbl(userDataId.creatorId, currentUserData.userType);
       }
 
-   }
+   
 
     return returnResponse(
       "success",
@@ -4572,7 +4644,7 @@ const completeLedgerDetails = async (bodyData, userData) => {
               data.amount * (Number(data.odds))
           }
             
-            _d(profitLoss)
+            // _d(profitLoss)
             
           }
 
@@ -5161,6 +5233,8 @@ let groupCond = {
   }
   
 };
+
+
 
 
 module.exports = {

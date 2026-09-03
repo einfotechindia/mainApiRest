@@ -2,8 +2,13 @@ const { SendResponse } = require("../../Helpers/ResponseMapper");
 const S = require("../../Services/CenterPanel/CenterPanel.service");
 
 const wrap = (fn) => async (req, res) => {
-  try { await fn(req, res); }
-  catch (err) { return SendResponse(res, "error", err.message || "Something went wrong"); }
+  try {
+     await fn(req, res);
+  }
+  catch (err) {
+    console.log(err.message , "err")
+    return SendResponse(res, "error", err.message || "Something went wrong");
+  }
 };
 
 module.exports = {
@@ -18,4 +23,6 @@ module.exports = {
   BetfairMarketDecision: wrap(S.BetfairMarketDecision),
   BookmakerOddsAutomatic: wrap(S.BookmakerOddsAutomatic),
   FancyAutomaticDecision: wrap(S.FancyAutomaticDecision),
+  eventWiseCheckupReport: wrap(S.eventWiseCheckupReport),
+  EventHealthReport: wrap(S.EventHealthReport),
 };

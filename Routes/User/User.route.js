@@ -5,6 +5,7 @@ const {
   convertDecruptToEncrupt,
   isOwnerAndStaff,
 } = require("../../Middlewares/VerifyToken");
+const { rateLimit } = require("../../Middlewares/routeRateLimit");
 const router = express.Router();
 const UserController = require("../../Controllers/User/User.controller");
 
@@ -68,7 +69,7 @@ router.patch(
   UserController.updateTransactionPassword
 );
 
-router.patch("/updateCoins", verifyToken, UserController.updateCoins);
+router.patch("/updateCoins", verifyToken, rateLimit(10, 60), UserController.updateCoins);
 router.post("/createDomain", verifyToken, UserController.createDomain);
 router.post("/domainList", verifyToken, UserController.domainList);
 

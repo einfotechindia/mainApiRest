@@ -74,47 +74,25 @@ const ensureIndexes = async () => {
       { key: { creatorId: 1 } },
       { key: { marketId: 1 } },
       { key: { betId: 1 } },
-      { key: { isCash: 1 } },
-      { key: { userId: 1, userType: 1 } },
-      { key: { userId: 1, agentId: 1, marketId: 1, overallType: 1 } },
-      { key: { gameType: 1, marketId: 1, overallType: 1 } },
       { key: { date: -1, marketId: 1 } },
+      // User hierarchy — reports/list queries
       { key: { agentId: 1, userType: 1, isDeleted: 1, createdAt: 1, _id: 1 } },
-      {
-        key: {
-          superagentId: 1,
-          userType: 1,
-          isDeleted: 1,
-          createdAt: 1,
-          _id: 1,
-        },
-      },
+      { key: { superagentId: 1, userType: 1, isDeleted: 1, createdAt: 1, _id: 1 } },
       { key: { masterId: 1, userType: 1, isDeleted: 1, createdAt: 1, _id: 1 } },
-      {
-        key: { subadminId: 1, userType: 1, isDeleted: 1, createdAt: 1, _id: 1 },
-      },
+      { key: { subadminId: 1, userType: 1, isDeleted: 1, createdAt: 1, _id: 1 } },
       { key: { adminId: 1, userType: 1, isDeleted: 1, createdAt: 1, _id: 1 } },
-      {
-        key: {
-          superadminId: 1,
-          userType: 1,
-          isDeleted: 1,
-          createdAt: 1,
-          _id: 1,
-        },
-      },
-      {
-        key: { subownerId: 1, userType: 1, isDeleted: 1, createdAt: 1, _id: 1 },
-      },
-      {
-        key: { ownerId: 1, userType: 1, isDeleted: 1, createdAt: 1, _id: 1 },
-      },
-      {
-        key: { userId: 1, isDeclare: 1, forBet: 1, _id: 1 },
-      },
-      {
-        key: { forBet: 1, marketId: 1, overallType: 1, selectionId: 1 },
-      },
+      { key: { superadminId: 1, userType: 1, isDeleted: 1, createdAt: 1, _id: 1 } },
+      { key: { subownerId: 1, userType: 1, isDeleted: 1, createdAt: 1, _id: 1 } },
+      { key: { ownerId: 1, userType: 1, isDeleted: 1, createdAt: 1, _id: 1 } },
+      // Bet placing — deleteMany + insertTransactionLog
+      { key: { userId: 1, marketId: 1, overallType: 1, selectionId: 1 } },
+      { key: { userId: 1, marketId: 1, overallType: 1, gameType: 1 } },
+      // GetUserCoins — main aggregation
+      { key: { userId: 1, isDeclare: 1, forBet: 1, overallType: 1, isCash: 1, isComm: 1 } },
+      // Session position by selectionId
+      { key: { userId: 1, selectionId: 1, marketId: 1 } },
+      // Decision — market-wide queries
+      { key: { gameType: 1, marketId: 1, overallType: 1 } },
     ];
 
     for (const index of requiredIndexes) {

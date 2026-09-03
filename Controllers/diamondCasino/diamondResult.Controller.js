@@ -44,10 +44,12 @@ const {
 const { emitToUser , emitToMultipleUsers} =  require("../../socket.js")
 
 const DiamondCasinoService = require("../../Services/DiamondCasino/DiamondCasino.service");
+const { msg } = require("../../Helpers/MessageHelper");
 axios.defaults.timeout = 1000;
 const Joi = require("joi");
 
 const showResultConvert = async (resultData, casinoType) => {
+  
   let returnResult = "";
   if (resultData.gtype == "teen20") {
     if (resultData.win == 1) {
@@ -233,18 +235,20 @@ const showResultConvert = async (resultData, casinoType) => {
     returnResult = values.join("||");
   }
 
-  if (resultData.gtype == "ballbyball") {
+  if (resultData.gtype == "ballbyball" || resultData.gtype == "queen"  || resultData.gtype == "poker") {
     returnResult = resultData.desc;
   }
 
 
-  // if (resultData.ename.toUpperCase() == "GOAL") {
-  //   returnResult = resultData.winnat;
-  // }
+  const ename = resultData?.ename?.trim().toUpperCase();
+  if (
+    ["GOAL 2", "GOAL", "MOGAMBO", "LUCKY 6", "UNLIMITED JOKER 20-20"].includes(ename)
+  ) {
+    returnResult = resultData.rdesc;
+  }
 
 
-
-
+  //_dx(returnResult)
   return returnResult;
 };
 
@@ -282,10 +286,12 @@ const fetchRoundWiseResultAndSave = async (
         }
 
 
-        //  _d(marketData , "marketData")
+    
 
         if (marketData) {
+         
           const showResult = await showResultConvert(marketData);
+
           const updateObj = {
             resultDetails: marketData,
             result: marketData.win,
@@ -294,8 +300,6 @@ const fetchRoundWiseResultAndSave = async (
           };
 
 
-          //  _d(updateObj , "updateObj")
-
           await casinoBetModel.updateMany(
             {
               roundId: roundId,
@@ -303,7 +307,7 @@ const fetchRoundWiseResultAndSave = async (
             updateObj
           );
 
-          await client.srem(`diamondUndeclaredRoundId`, roundId);
+         await client.srem(`diamondUndeclaredRoundId`, roundId);
           declaredRoundList.push(roundId);
         }
       }
@@ -371,20 +375,12 @@ const saveResult = async (req, res) => {
       undeclaredRoundIdArray.push(data._id);
     });
 
-    // _dx(undeclaredRoundIdArray);
-
-
+  
     if (req && req.body.declaredRoundIdArray) {
-      // delete where.isDeclare
       undeclaredRoundIdArray = req.body.declaredRoundIdArray;
     }
 
-
-    // _d(undeclaredRoundIdArray)
-
-   //  _d(isVankyResult , "isVankyResult")
-
-
+    //_d(undeclaredRoundIdArray , "undeclaredRoundIdArray")
     let declaredRoundList = await fetchRoundWiseResultAndSave(
       undeclaredRoundIdArray,
       isVankyResult
@@ -440,7 +436,7 @@ const betsResultOfClient = async (req, res) => {
     let resultExecute = await client.get(`redisBetsResultOfClient`);
     if (resultExecute) {
       if (res) {
-        return SendResponse(res, "success", "result already going on ");
+        return SendResponse(res, "success", msg("diamond.resultAlreadyGoing"));
       } else {
         _d("result already going on ");
         return false;
@@ -459,17 +455,19 @@ const betsResultOfClient = async (req, res) => {
       isDeleted: false,
     };
 
+
     if (req && req.body.declaredRoundIdArray) {
       delete where.isDeclare
       where.roundId = { $in: req.body.declaredRoundIdArray };
     }
+
 
     const betData = await casinoBetModel.find(where);
 
     if (!betData || betData.length === 0) {
       await client.del(`redisBetsResultOfClient`);
       if (res) {
-        return SendResponse(res, "success", "No bets found");
+        return SendResponse(res, "success", msg("diamond.noBetsFound"));
       } else {
         return false;
       }
@@ -511,7 +509,7 @@ const betsResultOfClient = async (req, res) => {
 
         let creditAmount = await selectionResult(data);
 
-        let socketRemark =  `You ${creditAmount < 0 ? `Loss`:`won`} ${Math.abs(creditAmount)} for ${casinoType}-${data.playerName}`
+        let socketRemark = msg("diamond.socketWinLossRemark", { winLoss: creditAmount < 0 ? "Loss" : "won", amount: Math.abs(creditAmount), casinoType, roundId })
         let socketObj = {
           type : "diamondCasino",
           profitLoss: creditAmount,
@@ -550,7 +548,7 @@ const betsResultOfClient = async (req, res) => {
           forBet: 1,
           marketId: roundId,
           date: data.date,
-          remarks: `${casinoType} (${data.eventId}) bet  for roundId ${roundId} for ${data.playerName} `,
+          remarks: msg("diamond.betRemark", { casinoType, eventId: data.eventId, roundId, playerName: data.playerName }),
         };
 
         transactionLog.push(pushTransaction);
@@ -567,7 +565,7 @@ const betsResultOfClient = async (req, res) => {
           gameType: `diamondCasino`,
           sportsType: `casino`,
           userRemark: `Diamond CasinoBet For ${casinoType} Of (${roundId}) for player ${data.playerName}`,
-          remark: `Diamond CasinoBet For ${casinoType} Of (${roundId}) for player ${data.playerName}`,
+          remark: msg("diamond.statementRemark", { casinoType, roundId, playerName: data.playerName }),
         };
         statementLog.push(statement);
 
@@ -618,7 +616,7 @@ const betsResultOfClient = async (req, res) => {
 
       if (directShareData) {
         let crickInsertAmount = logData.amount ? logData.amount : 0;
-        let casinoRemark = `diamondCasino - ${logData.remarks} / -(${_date()})`;
+        let casinoRemark = msg("diamond.crickRemark", { betRemarks: logData.remarks, date: _date() });
 
         let crickPushTransactionLog = {
           amount: crickInsertAmount,
@@ -703,13 +701,13 @@ const betsResultOfClient = async (req, res) => {
             gameType: `diamondCasino`,
             sportsType: `casino`,
             userRemark: `Diamond Casino Comm for ${transactionLog[key].marketId}`,
-            remark: `Diamond Casino Comm for ${transactionLog[key].marketId}`,
+            remark: msg("diamond.commRemark", { marketId: transactionLog[key].marketId }),
           };
 
           statementLog.push(statementComm);
 
           let crickInsertAmountComm = -1 * clientComm ? -1 * clientComm : 0;
-          let casinoRemarkComm = `${casinoRemark} - Commission`;
+          let casinoRemarkComm = msg("diamond.crickRemarkComm", { betRemarks: logData.remarks, date: _date() });
 
           const crickPushTransactionLogComm = {
             amount: crickInsertAmountComm,
@@ -745,29 +743,6 @@ const betsResultOfClient = async (req, res) => {
         }
       }
     }
-
-
-    //_d(transactionLog.length)
-    // let transactionLogObjBulk = {
-    //     updateOne: {
-    //       filter: { betId: data._id },
-    //       update: {
-    //         $set: pushTransaction,
-    //       },
-    //     },
-    //   };
-
-    //   bulkWriteTransaction.push(transactionLogObjBulk);
-    //   let statementLogObjBulk = {
-    //     updateOne: {
-    //       filter: { betId: data._id },
-    //       update: {
-    //         $set: statement,
-    //       },
-    //     },
-    //   };
-    //   bulkWriteStatement.push(statementLogObjBulk);
-    //   _dx(transactionLog.length)
 
 
     try {
@@ -815,8 +790,6 @@ const betsResultOfClient = async (req, res) => {
     await client.del(`redisBetsResultOfClient`);
 
 
-
-
     emitToMultipleUsers(socketDecisionIdArray, "decisionResult")
    
 
@@ -842,10 +815,6 @@ const betsResultOfClient = async (req, res) => {
 };
 
 async function selectionResult(betData) {
-  // _d(betData.sid , "sid")
-  //   _d(betData.result , "result")
-  //   _d(betData.betType , "betType")
-
   let isVirtual = betData.isVirtual ? betData.isVirtual : false;
   let returnAmount = 0;
   if (!isVirtual) {
@@ -860,8 +829,14 @@ async function selectionResult(betData) {
       betData.eventId == 3034 ||
       betData.eventId == 3059 ||
       betData.eventId == 3061 ||
+      betData.eventId == 3037 ||
+      betData.eventId == 3051 ||
       betData.eventId == 3065
     ) {
+
+      if (betData.casinoType == "poker") {
+        betData.result = betData.result == "11" ? "1" : "2"
+      }
 
       if (betData.sid == betData.result && betData.betType == "L") {
         returnAmount = betData.profit;
@@ -874,10 +849,32 @@ async function selectionResult(betData) {
       } else {
         returnAmount = 0;
       }
+
+
     }
 
     if (betData.eventId == 3030 && betData.result == 0) {
       returnAmount = (-1 * betData.amount) / 2;
+    }
+
+
+
+    if (
+      betData.casinoType == "goal2" ||
+      betData.casinoType == "goal" ||
+      betData.casinoType == "mogambo" ||
+      betData.casinoType == "lucky5" ||
+      betData.casinoType == "joker120" 
+    ) {
+      returnAmount = betData.loss;
+      let marketWiseData = betData.resultDetails;
+      let nat = (betData.playerName).toUpperCase();
+      const desc = marketWiseData.rdesc;
+      let splitResult = desc.split("#").map((value) => value.trim());
+      splitResult = splitResult.map(item => item.toUpperCase());
+      if (splitResult.includes(nat)) {
+        returnAmount = betData.profit;
+      }
     }
 
     if (betData.casinoType == "lucky7eu") {
@@ -1576,7 +1573,7 @@ const generateDiamondLedger = async (req, res) => {
           forBet: 1,
           isDeclare: 1,
           overallType: "diamondCasinoComm",
-          remarks: `diamond casino comm credit for ${data.casinoName} (${showDate})`,
+          remarks: msg("diamond.commCreditRemark", { casinoName: data.casinoName, date: showDate }),
         };
 
         clientCommTransaction.push(pushCommTransaction);
@@ -1594,7 +1591,7 @@ const generateDiamondLedger = async (req, res) => {
             statementFor: "diamondCasinoComm",
             gameType: "diamondCasino",
             sportsType: `casino`,
-            remark: `diamond casino comm credit for ${data.casinoName} (${showDate})`,
+            remark: msg("diamond.commCreditRemark", { casinoName: data.casinoName, date: showDate }),
             userRemark: `diamond casino comm credit for ${data.casinoName} (${showDate})`,
           };
           clientCommStatement.push(pushCommStatement);
@@ -1846,7 +1843,7 @@ const generateDiamondLedger = async (req, res) => {
         marketId: `${data.eventId}-${showDate}`,
         eventId: data.eventId,
         eventName: `${data.casinoName} (${showDate})`,
-        remark: `${data.casinoName} (${showDate})`,
+        remark: msg("diamond.casinoLedgerRemark", { casinoName: data.casinoName, date: showDate }),
         userType: "client",
         ledgerType: "diamondCasino",
         amount: clientProfitLoss + clientCommAmt,
@@ -2057,7 +2054,7 @@ const generateUserDiamondLedger = async (showDate, bodyData) => {
         marketId: `${data.eventId}-${showDate}`,
         eventId: data.eventId,
         eventName: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
-        remark: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
+        remark: msg("diamond.ledgerDeclareRemark", { casinoName, date: showDate }),
         date: todayDate,
         userType: "agent",
         ledgerType: "diamondCasino",
@@ -2181,7 +2178,7 @@ const generateUserDiamondLedger = async (showDate, bodyData) => {
         marketId: `${data.eventId}-${showDate}`,
         eventId: data.eventId,
         eventName: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
-        remark: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
+        remark: msg("diamond.ledgerDeclareRemark", { casinoName, date: showDate }),
         date: todayDate,
         userType: "superagent",
         ledgerType: "diamondCasino",
@@ -2299,7 +2296,7 @@ const generateUserDiamondLedger = async (showDate, bodyData) => {
         marketId: `${data.eventId}-${showDate}`,
         eventId: data.eventId,
         eventName: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
-        remark: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
+        remark: msg("diamond.ledgerDeclareRemark", { casinoName, date: showDate }),
         date: todayDate,
         userType: "master",
         ledgerType: "diamondCasino",
@@ -2415,7 +2412,7 @@ const generateUserDiamondLedger = async (showDate, bodyData) => {
         marketId: `${data.eventId}-${showDate}`,
         eventId: data.eventId,
         eventName: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
-        remark: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
+        remark: msg("diamond.ledgerDeclareRemark", { casinoName, date: showDate }),
         date: todayDate,
         userType: "subadmin",
         ledgerType: "diamondCasino",
@@ -2526,7 +2523,7 @@ const generateUserDiamondLedger = async (showDate, bodyData) => {
         marketId: `${data.eventId}-${showDate}`,
         eventId: data.eventId,
         eventName: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
-        remark: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
+        remark: msg("diamond.ledgerDeclareRemark", { casinoName, date: showDate }),
         date: todayDate,
         userType: "admin",
         ledgerType: "diamondCasino",
@@ -2641,7 +2638,7 @@ const generateUserDiamondLedger = async (showDate, bodyData) => {
         marketId: `${data.eventId}-${showDate}`,
         eventId: data.eventId,
         eventName: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
-        remark: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
+        remark: msg("diamond.ledgerDeclareRemark", { casinoName, date: showDate }),
         date: todayDate,
         userType: "superadmin",
         ledgerType: "diamondCasino",
@@ -2751,7 +2748,7 @@ const generateUserDiamondLedger = async (showDate, bodyData) => {
         marketId: `${data.eventId}-${showDate}`,
         eventId: data.eventId,
         eventName: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
-        remark: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
+        remark: msg("diamond.ledgerDeclareRemark", { casinoName, date: showDate }),
         date: todayDate,
         userType: "subowner",
         ledgerType: "diamondCasino",
@@ -2856,7 +2853,7 @@ const generateUserDiamondLedger = async (showDate, bodyData) => {
         marketId: `${data.eventId}-${showDate}`,
         eventId: data.eventId,
         eventName: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
-        remark: `Diamond Casino Ledger For (${casinoName} - ${showDate})`,
+        remark: msg("diamond.ledgerDeclareRemark", { casinoName, date: showDate }),
         date: todayDate,
         userType: "owner",
         ledgerType: "diamondCasino",
@@ -2903,7 +2900,7 @@ const deleteDiamondCasinoBets = async (req, res) => {
     return SendResponse(res, "error", "Failed In validation", errorMessages);
   }
   if (userData.userType != "owner") {
-    return SendResponse(res, "error", "Only owner authorised to update bets");
+    return SendResponse(res, "error", msg("diamond.onlyOwnerAuthorised"));
   }
   if (bodyData.password != process.env.BETS_DELETE_PASSWORD) {
     return SendResponse(
@@ -2949,7 +2946,7 @@ const deleteBets = async (betsIdArray, deletedStatus) => {
   );
 
   if (!betsData) {
-    return returnResponse(res, "error", "no bets found");
+    return returnResponse(res, "error", msg("diamond.noBetsFound"));
   }
 
   betsData.map(async (data) => {
@@ -3012,7 +3009,7 @@ const deleteBets = async (betsIdArray, deletedStatus) => {
   ResponseMapper = await updateBulkCoinsExposureUserByMarketId(
     uniqueClientData
   );
-  return returnResponse("success", "bets updated successfully", ResponseMapper);
+  return returnResponse("success", msg("diamond.betsUpdated"), ResponseMapper);
 };
 
 
@@ -3138,7 +3135,7 @@ const generateDiamondCasinoListByDate = async (req, res) => {
   try {
     const bodyData = req.body;
     if (!bodyData.date) {
-      return SendResponse(res, "error", "date is required");
+      return SendResponse(res, "error", msg("diamond.dateRequired"));
     }
     let date = bodyData.date;
     await saveCasinoInSportsList(bodyData?.date);
@@ -3150,16 +3147,6 @@ const generateDiamondCasinoListByDate = async (req, res) => {
     );
   } catch (error) {
     _d(error, "error in generateDiamondCasinoListByDate ");
-  }
-};
-
-const generateProfitLossPosByUserIdAndRoundId = async (roundIdArray) => {
-  try {
-    _dx(roundIdArray);
-
-    let where = {};
-  } catch (error) {
-    console.log(error);
   }
 };
 
@@ -3221,10 +3208,6 @@ const doManaualResult = async (req, res) => {
       }
       updateResult.resultDetails.desc = `${win}`
     }
-
-
-
-    // _d(updateResult , "updateResult")
 
     let updateBetsData = await casinoBetModel.updateMany(updateWhere, updateResult)
 
@@ -3368,26 +3351,20 @@ const saveAvaitorResults = async (req, res) => {
         },
       ]);
       
-      //_d(undeclaredRound, "undeclaredRound")
-      
+    
       let undeclaredRoundIdArray = [];
       undeclaredRound.map((data) => {
         undeclareAvaitorRoundId.push(data._id);
       });
     }
 
-
-    //_dx(undeclareAvaitorRoundId)
-
-
-
     if (!undeclareAvaitorRoundId?.length) {
-      return res ? SendResponse(res, "success", "No undeclared round IDs") : [];
+      return res ? SendResponse(res, "success", msg("diamond.noUndeclaredRounds")) : [];
     }
 
     const hitUrl = process.env.AVAITOR_RESULT_URL;
     if (!hitUrl) {
-      return res ? SendResponse(res, "error", "Cache URL not found") : [];
+      return res ? SendResponse(res, "error", msg("diamond.cacheUrlNotFound")) : [];
     }
 
     /* ---------------- FETCH RESULTS IN PARALLEL ---------------- */
@@ -3409,7 +3386,7 @@ const saveAvaitorResults = async (req, res) => {
       }
     }
     if (!successRoundIds.length) {
-      return res ? SendResponse(res, "success", "No valid results received") : [];
+      return res ? SendResponse(res, "success", msg("diamond.noValidResults")) : [];
     }
 
     /* ---------------- FETCH BET DATA ---------------- */
@@ -3432,7 +3409,7 @@ const saveAvaitorResults = async (req, res) => {
       const directShareData = await getShareChainData(bet.clientId);
 
       let crickInsertAmount = lossAmount
-      let casinoRemark = `Avaitor-Vig-(${_date()})`;
+      let casinoRemark = msg("diamond.aviatorCrickRemark", { date: _date() });
       let crickPushTransactionLog = {
                     amount: crickInsertAmount,
                     clientProfitLoss: crickInsertAmount,
@@ -3503,8 +3480,9 @@ const saveAvaitorResults = async (req, res) => {
   ]);
     
 
+    
     return res
-      ? SendResponse(res, "success", "Result saved successfully")
+      ? SendResponse(res, "success", msg("diamond.resultSaved"))
       : successRoundIds;
 
   } catch (error) {
@@ -3525,7 +3503,7 @@ const saveCasinoLedgerByDateByCrickTransaction = async (req, res) => {
     let returnData = await DiamondCasinoService.createDiammondLedgerByCricTransaction(date);
 
     return res
-      ? SendResponse(res, "success", `Ledger Declare Successfully For Date ${date}`)
+      ? SendResponse(res, "success", msg("diamond.ledgerDeclareSuccess", { date }))
       : true;
 
   } catch (error) {
@@ -3533,41 +3511,6 @@ const saveCasinoLedgerByDateByCrickTransaction = async (req, res) => {
   }
 };
 
-const saveVirtualCasinoResult = async (roundId, result) => {
-  try {
-    let gameType = result.game ? result.game : ""
-    let resultData = result.result ? result.result : ""
-
-    // _d(resultData , "resultData")
-
-    if (resultData) {
-      let showResult = ""
-      resultData = resultData.split("_");
-      showResult = resultData[0]
-      let resultDetails = {
-        roundId: roundId,
-        result: resultData,
-        showResult: showResult,
-      }
-      const updateObj = {
-        resultDetails: resultDetails,
-        result: showResult,
-        isPartiallyDeclare: 1,
-        showResult: showResult,
-      };
-      //  _d(updateObj , "updateObj")
-      await casinoBetModel.updateMany(
-        {
-          roundId: roundId,
-        },
-        updateObj
-      );
-      await client.srem(`virtualUndeclaredRoundId`, roundId);
-    }
-  } catch (err) {
-    console.log(err, "Error in saveVirtualCasinoResult:");
-  }
-};
 
 const newGenerateDiamondLedger = async (req, res) => {
   try {
@@ -3845,7 +3788,7 @@ const newGenerateDiamondLedger = async (req, res) => {
           forBet: 1,
           isDeclare: 1,
           overallType: "diamondCasinoComm",
-          remarks: `diamond casino comm credit for ${data.casinoName} (${showDate})`,
+          remarks: msg("diamond.commCreditRemark", { casinoName: data.casinoName, date: showDate }),
         };
 
         clientCommTransaction.push(pushCommTransaction);
@@ -3863,7 +3806,7 @@ const newGenerateDiamondLedger = async (req, res) => {
             statementFor: "diamondCasinoComm",
             gameType: "diamondCasino",
             sportsType: `casino`,
-            remark: `diamond casino comm credit for ${data.casinoName} (${showDate})`,
+            remark: msg("diamond.commCreditRemark", { casinoName: data.casinoName, date: showDate }),
             userRemark: `diamond casino comm credit for ${data.casinoName} (${showDate})`,
           };
           clientCommStatement.push(pushCommStatement);
@@ -4115,7 +4058,7 @@ const newGenerateDiamondLedger = async (req, res) => {
         marketId: `${data.eventId}-${showDate}`,
         eventId: data.eventId,
         eventName: `${data.casinoName} (${showDate})`,
-        remark: `${data.casinoName} (${showDate})`,
+        remark: msg("diamond.casinoLedgerRemark", { casinoName: data.casinoName, date: showDate }),
         userType: "client",
         ledgerType: "diamondCasino",
         amount: clientProfitLoss + clientCommAmt,
@@ -4132,7 +4075,7 @@ const newGenerateDiamondLedger = async (req, res) => {
 
 
 
-      _d(clientShareDirect, "clientShareDirect")
+     // _d(clientShareDirect, "clientShareDirect")
       
 
 
@@ -4208,113 +4151,71 @@ const newGenerateDiamondLedger = async (req, res) => {
 
 const saveResultRedisVirtual = async (req, res) => {
   try {
-    // Aggregate user-wise total amount
+    const undeclaredRoundIdArray = await client.smembers(
+      `virtualUndeclaredRoundId`
+    );
 
-    const crickPromise = await StatementModel.aggregate([
-      {
-        $match: {
-          statementFor: "diamondCasino",
-        },
-      },
-      {
-        $group: {
-          _id: "$userId",
-          totalCoins: { $sum: "$amount" },
-        },
-      },
-    ]);
-
-
-    _dx(crickPromise, "crickPromise")
-    
-    
-    // Debug aggregate response
-   // _dx(crickPromise, "crickPromise");
-
-    // Handle empty data
-    if (!crickPromise || crickPromise.length === 0) {
+    if (!undeclaredRoundIdArray || undeclaredRoundIdArray.length === 0) {
       return SendResponse(
         res,
         "success",
-        "No transaction data found",
-        {
-          total: 0,
-          success: 0,
-          failed: 0,
-        }
+        "No undeclared roundIds found"
       );
     }
 
-    let success = 0;
-    let failed = 0;
+    const resultUrl = casinoFetchUrl.virtualCasinoResult;
 
-    // Prepare bulk insert data
-    const transactionLogs = crickPromise.map((data) => {
+    const promises = undeclaredRoundIdArray.map(async (roundId) => {
       try {
-        return {
-          betId: data?.betId || null, // prevent undefined error
-          userId: data._id,
-          clientId: data._id,
-          amount: Number(data.totalCoins) || 0,
-          gameType: "diamondCasino",
-          // overallType: "diamondCasino",
-           overallType: "diamondCasinoComm",
-          userType: "client",
-          isComm: 1,
-          forBet: 1,
-          isDeclare: 1,
+        const resultData = await axios.post(resultUrl, { roundId: roundId });
+        if (!resultData?.data?.data) {
+          throw new Error(`Invalid response for roundId: ${roundId}`);
+        }
 
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
+        const result = resultData.data.data;
+        if (result.result) {
+          await saveVirtualCasinoResult(
+            roundId,
+            result
+          );
+          return { roundId, status: "fulfilled" };
+        }
+        return { roundId, status: "partiallyResulted" };
       } catch (err) {
-        failed++;
-        _d("Map Error:", err);
-        return null;
+        _d(`Error in roundId ${roundId}`, err.message);
+        return { roundId, status: "rejected", error: err.message };
       }
-    }).filter(Boolean);
+    });
+    const results = await Promise.allSettled(promises);
+    const success = results.filter(r => r.status === "fulfilled").length;
+    const failed = results.filter(r => r.status === "rejected").length;
+    // _d(`Total: ${results.length}, Success: ${success}, Failed: ${failed}`);
 
-    // Insert using bulk operation (much faster)
-    if (transactionLogs.length > 0) {
-      try {
-        const insertResult = await TransactionLogModel.insertMany(
-          transactionLogs,
-          { ordered: false }
-        );
-        success = insertResult.length;
-      } catch (insertError) {
-        _d("InsertMany Error:", insertError);
 
-        // Count successful inserts even if partial failure
-        success = insertError?.result?.result?.nInserted || 0;
-        failed = transactionLogs.length - success;
-      }
-    }
-
-    return SendResponse(
+    return res ? SendResponse(
       res,
       "success",
       "Result processing completed",
       {
-        total: transactionLogs.length,
+        total: results.length,
         success,
-        failed,
+        failed
       }
-    );
+    ) : null;
+
   } catch (error) {
     _d("Outer Error:", error);
-
-    return SendResponse(
+    return res ? SendResponse(
       res,
       "error",
       "Something went wrong",
-      {
-        message: error.message,
-        stack: error.stack,
-      }
-    );
+      error.message
+    ) : null;
   }
 };
+
+
+
 
 
 
@@ -4380,7 +4281,7 @@ const saveBetfairCasinoResults = async (req, res) => {
 
     if (betfairUndeclareRoundId?.length < 1) {
       if (res) {
-        return res ? SendResponse(res, "success", "No undeclared round IDs") : [];
+        return res ? SendResponse(res, "success", msg("diamond.noUndeclaredRounds")) : [];
       } else {
         return false
       }
@@ -4389,7 +4290,7 @@ const saveBetfairCasinoResults = async (req, res) => {
 
     const hitUrl = process.env.BETFAIR_CASINO_RESULT_URL;
     if (!hitUrl) {
-      return res ? SendResponse(res, "error", "Cache URL not found") : [];
+      return res ? SendResponse(res, "error", msg("diamond.cacheUrlNotFound")) : [];
     }
 
     /* ---------------- FETCH RESULTS IN PARALLEL ---------------- */
@@ -4464,7 +4365,7 @@ const saveBetfairCasinoResults = async (req, res) => {
 
 
     if (!successRoundIds.length) {
-      return res ? SendResponse(res, "success", "No valid results received") : [];
+      return res ? SendResponse(res, "success", msg("diamond.noValidResults")) : [];
     }
 
     /* ---------------- FETCH BET DATA ---------------- */
@@ -4507,7 +4408,7 @@ roundBetData.forEach((bet) => {
       isComm: true,
       betTurnOver: 0,
       profitLoss: 0,
-      remarks :`betfairCasino - ${bet.roundId} - ${bet.casinoType} / -(${_date()})`
+      remarks: msg("diamond.betfairCrickRemark", { roundId: bet.roundId, casinoType: bet.casinoType, date: _date() })
     };
     roundIdArray.push(roundId)
   }
@@ -4536,9 +4437,6 @@ roundBetData.forEach((bet) => {
     finalClientArray[userId][roundId].profitLoss += profitLoss;
   }
 });
-
-
-  //  _dx(finalClientArray , "finalClientArray")
 
     if (roundBetData.length > 0) {
       for (const bet of roundBetData) {
@@ -4596,7 +4494,7 @@ roundBetData.forEach((bet) => {
           isDeclare : 1 ,
           forBet: 1,
           date: bet.date,
-          remarks: `${bet.casinoType} (${bet.eventId}) bet  for roundId ${bet.roundId} for ${bet.playerName} `,
+          remarks: msg("diamond.betRemark", { casinoType: bet.casinoType, eventId: bet.eventId, roundId: bet.roundId, playerName: bet.playerName }),
         };
 
         if (directShareData) {
@@ -4623,7 +4521,7 @@ roundBetData.forEach((bet) => {
           gameType: `betfairCasino`,
           sportsType: `casino`,
           userRemark: `Betfair CasinoBet For ${bet.casinoType} Of (${bet.roundId}) for player ${bet.playerName}`,
-          remark: `Diamond CasinoBet For ${bet.casinoType} Of (${bet.roundId}) for player ${bet.playerName}`,
+          remark: msg("diamond.statementRemark", { casinoType: bet.casinoType, roundId: bet.roundId, playerName: bet.playerName }),
         };
 
         statementLog.push(statement);
@@ -4633,7 +4531,7 @@ roundBetData.forEach((bet) => {
         if (directShareData) {
           let crickInsertAmount = profitLoss
 
-          let casinoRemark = `betfairCasino - ${bet.roundId} - ${bet.casinoType} / -(${_date()})`;
+          let casinoRemark = msg("diamond.betfairCrickRemark", { roundId: bet.roundId, casinoType: bet.casinoType, date: _date() });
 
           let crickPushTransactionLog = {
             amount: crickInsertAmount,
@@ -4690,8 +4588,6 @@ roundBetData.forEach((bet) => {
     }
 
 
-
-// commissionLogic
 for (const [userId, rounds] of Object.entries(finalClientArray)) {
   const directShareData = await getShareChainData(userId);
   for (const [roundId, data] of Object.entries(rounds)) {
@@ -4891,14 +4787,7 @@ for (const [userId, rounds] of Object.entries(finalClientArray)) {
     
     
     
-    // _d(transactionDeleteStatusComm , "transactionDeleteStatusComm")
-    // _d(transactionLogWhere , "transactionLogWhere")
-    // _d(statementLog , "statementLog")
-    // _d(transactionLogs , "transactionLogs")
-    // _d(crickTransactionLogObj , "crickTransactionLogObj")
-    // _d("stop")
-    // _dx(transactionLogWhereComm , "transactionLogWhereComm")
-    
+  
 
     let [transactionUpdate , crickUpdate , statementUpdate , bulkUpdate , removeRedis] = await Promise.allSettled([
       TransactionLogModel.length && TransactionLogModel.insertMany(transactionLogs),
@@ -4924,7 +4813,7 @@ for (const [userId, rounds] of Object.entries(finalClientArray)) {
 
 
     return res
-      ? SendResponse(res, "success", "Result saved successfully")
+      ? SendResponse(res, "success", msg("diamond.resultSaved"))
       : successRoundIds;
 
   } catch (error) {

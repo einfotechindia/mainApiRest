@@ -1,29 +1,23 @@
+const mongoose = require("mongoose");
 const TransactionLogModel = require("../Models/TransactionLog.model");
 const crickTransactionLModel = require("../Models/crickTransaction.model");
 const UserModel = require("../Models/User/User.model");
 const UserInternationExpoLimitModel = require("../Models/User/UserInternationalExpoLimit.model");
 const AccountCoins = require("../Models/User/AccountCoins.model");
-const PlayModel = require("../Models/Play.model");
 const profitLossPosition = require("../Models/BetsList/profitLossPosition.model");
 const moment = require("moment");
 const { ObjectId } = require("mongodb");
 const {
-  _dx,
-  _d,
   dateWhereCond,
   _date,
   _date_time,
-  throughSocketDataByAxios,
   chunkArrayNew,
-  caclculateTime,
   getSettingData,
   gameBetValidaterRedis
 } = require("./CommonHelper");
 const { InsertUserStatement } = require("./StatementHelper");
 const { returnResponse } = require("../Helpers/ResponseMapper");
-const bcrypt = require("bcrypt");
 const constant = require("../utils/constants");
-// const { setUserRedisData } = require("../Services/User/User.service");
 const { client } = require("./RedisHelper");
 const { siteSetting } = require("../Common/Constants");
 const {
@@ -31,6 +25,7 @@ const {
 } = require("../Helpers/UsersUtils");
 
 const {emitToUser} =  require("../socket.js")
+const { msg } = require("./MessageHelper");
 require("dotenv").config();
 
 const UpdateUserCoins = async (
@@ -42,322 +37,729 @@ const UpdateUserCoins = async (
   onCreate,
   isCash = false
 ) => {
-  let returnData = {}
-  let parentUserIdType = `${parentData.userType}Id`;
-  let [settingData , userData] = await Promise.all([getSettingData(), UserModel.findOne(
-    {
-      [parentUserIdType]: parentData.userId,
-      _id: userId,
-      status: 1,
-      isDeleted: false,
-    },
-    {
-      creatorId: 1,
-      userType: 1,
-      username: 1,
-      coins: 1,
-      name: 1,
-      userId: 1,
-      userId: 1,
-      clientId: 1,
-      agentId: 1,
-      superagentId: 1,
-      masterId: 1,
-      subadminId: 1,
-      adminId: 1,
-      superadminId: 1,
-      subownerId: 1,
-      ownerId: 1,
-      [parentUserIdType]: 1,
-    }
-  )]);
+  const session = await mongoose.startSession();
+  try {
+    const transactionAmount = Number(coins);
 
-  if (!userData) {
-    return returnResponse("error", "User is inactive, Please active first.");
+    // ============================================================
+    // 1. BASIC VALIDATION
+    // ============================================================
+
+    if (!Number.isFinite(transactionAmount) || transactionAmount === 0) {
+      return returnResponse("error", msg("transaction.invalidAmount"));
+    }
+
+    if (!userId || !parentData?.userId || !parentData?.userType) {
+      return returnResponse("error", msg("transaction.invalidAmount"));
+    }
+
+    if (String(userId) === String(parentData.userId)) {
+      return returnResponse("error", msg("transaction.selfTransferBlocked"));
+    }
+
+    const amount = Math.abs(transactionAmount);
+    const parentUserIdType = `${parentData.userType}Id`;
+
+    // ============================================================
+    // 2. SETTINGS + CHILD USER + REAL COINS FROM TRANSACTION TABLE
+    // ============================================================
+
+    const [settingData, userData, realUserCoins] = await Promise.all([
+      getSettingData(),
+      UserModel.findOne(
+        {
+          _id: userId,
+          [parentUserIdType]: parentData.userId,
+          status: 1,
+          isDeleted: false,
+        },
+        {
+          creatorId: 1,
+          userType: 1,
+          username: 1,
+          coins: 1,
+          name: 1,
+          userId: 1,
+          clientId: 1,
+          agentId: 1,
+          superagentId: 1,
+          masterId: 1,
+          subadminId: 1,
+          adminId: 1,
+          superadminId: 1,
+          subownerId: 1,
+          ownerId: 1,
+          [parentUserIdType]: 1,
+        }
+      ).lean(),
+      getUserCoinsByTransactionTable(userId),
+    ]);
+
+    if (!userData) {
+      return returnResponse("error", msg("transaction.userInactive"));
+    }
+
+    // ============================================================
+    // 3. CREATOR / PARENT VALIDATION
+    // ============================================================
+
+    const creatorData = await UserModel.findOne(
+      {
+        _id: userData.creatorId,
+        [parentUserIdType]: parentData.userId,
+        status: 1,
+        isDeleted: false,
+      },
+      {
+        userType: 1,
+        username: 1,
+        coins: 1,
+        transactionPassword: 1,
+        name: 1,
+        userId: 1,
+        clientId: 1,
+        agentId: 1,
+        superagentId: 1,
+        masterId: 1,
+        subadminId: 1,
+        adminId: 1,
+        superadminId: 1,
+        subownerId: 1,
+        ownerId: 1,
+      }
+    ).lean();
+
+    if (!creatorData) {
+      return returnResponse("error", msg("transaction.creatorInactive"));
+    }
+
+    if (String(creatorData._id) !== String(parentData.userId)) {
+      return returnResponse("error", msg("transaction.unauthorizedHierarchy"));
+    }
+
+    // ============================================================
+    // 4. TRANSACTION PASSWORD
+    // ============================================================
+
+    if (settingData?.isTransactionPassword === true) {
+      if (!transactionPassword) {
+        return returnResponse("error", msg("transaction.transactionPasswordRequired"));
+      }
+      const isTransactionPasswordCorrect = await checkUserTransactionPassword(
+        creatorData.userId,
+        transactionPassword,
+        creatorData.transactionPassword
+      );
+      if (!isTransactionPasswordCorrect) {
+        return returnResponse("error", msg("transaction.transactionPasswordWrong"));
+      }
+    }
+
+    // ============================================================
+    // 5. CLIENT BET LOCK
+    // ============================================================
+
+    if (userData.userType === "client") {
+      const checkBet = await gameBetValidaterRedis(userId, "check");
+      if (checkBet) {
+        return returnResponse("error", msg("bet.userPlacingBet"));
+      }
+    }
+
+    // ============================================================
+    // 6. PRE-FLIGHT BALANCE CHECK (real coins from transaction table)
+    // ============================================================
+
+    const creatorCoins = Number(creatorData.coins || 0);
+    let userCoins = Number(userData.coins || 0);
+    if (realUserCoins && realUserCoins.totalCoins != null) {
+      userCoins = Number(realUserCoins.totalCoins);
+    }
+
+    // Deposit: parent -> child, check parent has enough
+    if (transactionAmount > 0 && amount > creatorCoins) {
+      return returnResponse("error", msg("transaction.insufficientCoins"));
+    }
+
+    // Withdraw: child -> parent, check child has enough
+    if (transactionAmount < 0 && amount > userCoins) {
+      return returnResponse("error", msg("transaction.maxDebit", { maxCoins: userCoins, username: userData.username }));
+    }
+
+    // ============================================================
+    // 7. DETERMINE SENDER / RECEIVER
+    // ============================================================
+
+    let senderId, receiverId, senderOldCoins, receiverOldCoins;
+
+    if (transactionAmount > 0) {
+      // Deposit: parent sends to child
+      senderId = creatorData._id;
+      receiverId = userData._id;
+      senderOldCoins = creatorCoins;
+      receiverOldCoins = userCoins;
+    } else {
+      // Withdraw: child sends to parent
+      senderId = userData._id;
+      receiverId = creatorData._id;
+      senderOldCoins = userCoins;
+      receiverOldCoins = creatorCoins;
+    }
+
+    // ============================================================
+    // 8. RETURN DATA
+    // ============================================================
+
+    let returnData = {};
+
+    // ============================================================
+    // 9. MONGODB TRANSACTION — RACE CONDITION PROOF
+    // ============================================================
+
+    await session.withTransaction(
+      async () => {
+        // ATOMIC DEBIT — sender must have coins >= amount
+        const debitResult = await UserModel.updateOne(
+          {
+            _id: senderId,
+            status: 1,
+            isDeleted: false,
+            coins: { $gte: amount },
+          },
+          {
+            $inc: { coins: -amount },
+          },
+          { session }
+        );
+
+        if (debitResult.modifiedCount !== 1) {
+          throw new Error("INSUFFICIENT_COINS");
+        }
+
+        // ATOMIC CREDIT
+        const creditResult = await UserModel.updateOne(
+          {
+            _id: receiverId,
+            status: 1,
+            isDeleted: false,
+          },
+          {
+            $inc: { coins: amount },
+          },
+          { session }
+        );
+
+        if (creditResult.modifiedCount !== 1) {
+          throw new Error("RECEIVER_UPDATE_FAILED");
+        }
+
+        // VERIFY: sender coins must not be negative after debit
+        const senderAfter = await UserModel.findById(senderId, { coins: 1 }).session(session).lean();
+        if (!senderAfter || senderAfter.coins < 0) {
+          throw new Error("NEGATIVE_COINS_DETECTED");
+        }
+
+        // VERIFY: receiver coins must not be negative after credit
+        const receiverAfter = await UserModel.findById(receiverId, { coins: 1 }).session(session).lean();
+        if (!receiverAfter || receiverAfter.coins < 0) {
+          throw new Error("NEGATIVE_COINS_DETECTED");
+        }
+
+        // ========================================================
+        // TRANSACTION LOG DATA
+        // ========================================================
+
+        const creatorCoinsUpdated = transactionAmount * -1;
+        const userCoinsUpdated = transactionAmount;
+        const creatorUsertypeId = `${creatorData.userType}Id`;
+        const usertypeId = `${userData.userType}Id`;
+
+        let creatorDepositWithdrawType = msg("depositWithdraw.depositTo", { username: userData.username });
+        let userDepositWithdrawType = msg("depositWithdraw.depositTo", { username: userData.username });
+        let userStatementStatus = "deposit";
+
+        if (transactionAmount < 0) {
+          creatorDepositWithdrawType = msg("depositWithdraw.withdrawFrom", { username: userData.username });
+          userDepositWithdrawType = msg("depositWithdraw.withdrawFrom", { username: userData.username });
+          userStatementStatus = "withdraw";
+        }
+
+        // CREATOR TRANSACTION LOG
+        const creatorTransaction = await TransactionLogModel.create(
+          [
+            {
+              userId: creatorData._id,
+              amount: creatorCoinsUpdated,
+              overallType: "depositWithdraw",
+              remarks: creatorDepositWithdrawType,
+              [creatorUsertypeId]: creatorData.userId,
+              userType: creatorData.userType,
+              isDeclare: 1,
+              ...(isCash ? { isCash: true } : {}),
+            },
+          ],
+          { session }
+        );
+
+        // USER TRANSACTION LOG
+        const userTransaction = await TransactionLogModel.create(
+          [
+            {
+              userId: userData._id,
+              amount: userCoinsUpdated,
+              overallType: "depositWithdraw",
+              userType: userData.userType,
+              remarks: userDepositWithdrawType,
+              [usertypeId]: userData.userId,
+              isDeclare: 1,
+              ...(isCash ? { isCash: true } : {}),
+            },
+          ],
+          { session }
+        );
+
+        returnData.creatorTransactionId = creatorTransaction[0]._id;
+        returnData.userTransactionId = userTransaction[0]._id;
+
+        // ========================================================
+        // STATEMENTS
+        // ========================================================
+
+        const senderNewCoins = senderOldCoins - amount;
+        const receiverNewCoins = receiverOldCoins + amount;
+
+        const statementDataCreator = {
+          transactionId: creatorTransaction[0]._id,
+          amount: creatorCoinsUpdated,
+          oldAmount: creatorCoins,
+          newAmount: creatorCoins + creatorCoinsUpdated,
+          statementFor: constant.ACCOUNT_STATEMENT,
+          userRemark: userRemark,
+          remark: msg("statement.coinsUpdatedTo", { userName: userData.name, username: userData.username, parentUsername: parentData.username }),
+        };
+
+        const statementDataUser = {
+          transactionId: userTransaction[0]._id,
+          amount: userCoinsUpdated,
+          oldAmount: userCoins,
+          newAmount: userCoins + userCoinsUpdated,
+          userRemark: userRemark,
+          statementFor: constant.ACCOUNT_STATEMENT,
+          remark: msg("statement." + userStatementStatus + "Remark", {
+            oldAmount: userCoins,
+            newAmount: userCoins + userCoinsUpdated,
+            creatorName: creatorData.name,
+            creatorUsername: creatorData.username,
+            parentUsername: parentData.username,
+            parentName: parentData.name,
+          }),
+        };
+
+        const [userStatement, creatorStatement] = await Promise.all([
+          InsertUserStatement(statementDataUser, userData, session),
+          InsertUserStatement(statementDataCreator, creatorData, session),
+        ]);
+
+        returnData.userStatementId = userStatement._id;
+        returnData.creatorStatementId = creatorStatement._id;
+
+        // ========================================================
+        // CRICK TRANSACTIONS
+        // ========================================================
+
+        const COINS_DIVIDER = Number(process.env.COINS_DIVIDER || 100);
+
+        const creatorCrickMsgKey = creatorCoinsUpdated > 0 ? "crick.withdrawRemark" : "crick.depositRemark";
+        const creatorRemarkCrick = msg(creatorCrickMsgKey, {
+          userRemark: userRemark,
+          username: userData.username,
+          creatorUsername: creatorData.username,
+          amount: Math.abs(Math.round(creatorCoinsUpdated / COINS_DIVIDER)),
+          dateTime: _date_time(),
+        });
+
+        const userCrickMsgKey = transactionAmount < 0 ? "crick.withdrawRemark" : "crick.depositRemark";
+        const userRemarkCrick = msg(userCrickMsgKey, {
+          userRemark: userRemark,
+          username: userData.username,
+          creatorUsername: creatorData.username,
+          amount: Math.abs(Math.round(transactionAmount / COINS_DIVIDER)),
+          dateTime: _date_time(),
+        });
+
+        const crickCreatorTransaction = {
+          amount: creatorCoinsUpdated,
+          [`${creatorData.userType}ProfitLoss`]: creatorCoinsUpdated,
+          transactionType: "depositWithdrawal",
+          remarks: creatorRemarkCrick,
+          userId: creatorData.userId,
+          creatorId: creatorData.userId,
+          [`${creatorData.userType}Id`]: creatorData.userId,
+          ...(isCash ? { isCash: true } : {}),
+        };
+
+        const crickUserTransaction = {
+          amount: transactionAmount,
+          transactionType: "depositWithdrawal",
+          remarks: userRemarkCrick,
+          userId: userData.userId,
+          creatorId: creatorData._id,
+          [`${userData.userType}Id`]: userData.userId,
+          [`${userData.userType}ProfitLoss`]: transactionAmount,
+          ...(isCash ? { isCash: true } : {}),
+        };
+
+        const [crickTransactionCreator, crickTransactionUser] = await Promise.all([
+          crickTransactionLModel.create([crickCreatorTransaction], { session }),
+          crickTransactionLModel.create([crickUserTransaction], { session }),
+        ]);
+
+        returnData.crickTransactionCreatorId = crickTransactionCreator[0]._id;
+        returnData.crickTransactionUserId = crickTransactionUser[0]._id;
+      },
+      {
+        readConcern: { level: "snapshot" },
+        writeConcern: { w: "majority" },
+        maxCommitTimeMS: 5000,
+      }
+    );
+
+    // ============================================================
+    // 10. TRANSACTION COMMITTED — read actual current balance
+    // ============================================================
+
+    const [latestCreator, latestUser] = await Promise.all([
+      UserModel.findById(creatorData._id, { coins: 1 }).lean(),
+      UserModel.findById(userData._id, { coins: 1 }).lean(),
+    ]);
+
+    // ============================================================
+    // 11. GET EXPOSURE / PROFIT LOSS (derived fields only)
+    // ============================================================
+
+    const [creatorCalculated, userCalculated] = await Promise.all([
+      GetUserCoins(creatorData._id, creatorData.userType),
+      GetUserCoins(userData._id, userData.userType),
+    ]);
+
+    // ============================================================
+    // 12. UPDATE DERIVED FIELDS (NOT coins — coins already atomic)
+    // ============================================================
+
+    await Promise.all([
+      UserModel.updateOne(
+        { _id: creatorData._id },
+        {
+          $set: {
+            exposure: creatorCalculated?.exposure || 0,
+            profitLoss: creatorCalculated?.profitLoss || 0,
+            totalProfitLoss: creatorCalculated?.profitLoss || 0,
+            creditReference: creatorCalculated?.creditReference || 0,
+          },
+        }
+      ),
+      UserModel.updateOne(
+        { _id: userData._id },
+        {
+          $set: {
+            exposure: userCalculated?.exposure || 0,
+            profitLoss: userCalculated?.profitLoss || 0,
+            totalProfitLoss: userCalculated?.profitLoss || 0,
+            creditReference: userCalculated?.creditReference || 0,
+          },
+        }
+      ),
+    ]);
+
+    // ============================================================
+    // 13. REDIS SYNC
+    // ============================================================
+
+    if (siteSetting.IS_REDIS) {
+      await Promise.all([
+        client.hmset(
+          `${creatorData._id}`,
+          "coins", latestCreator?.coins || 0,
+          "exposure", creatorCalculated?.exposure || 0,
+          "profitLoss", creatorCalculated?.profitLoss || 0,
+          "creditReference", creatorCalculated?.creditReference || 0
+        ),
+        client.hmset(
+          `${userData._id}`,
+          "coins", latestUser?.coins || 0,
+          "exposure", userCalculated?.exposure || 0,
+          "profitLoss", userCalculated?.profitLoss || 0,
+          "creditReference", userCalculated?.creditReference || 0
+        ),
+      ]);
+    }
+
+    // ============================================================
+    // 14. SOCKET UPDATE
+    // ============================================================
+
+    emitToUser(
+      "coinUpdate",
+      {
+        coins: latestCreator?.coins || 0,
+        exposure: creatorCalculated?.exposure || 0,
+        profitLoss: creatorCalculated?.profitLoss || 0,
+        creditReference: creatorCalculated?.creditReference || 0,
+      },
+      creatorData.userId
+    );
+
+    emitToUser(
+      "coinUpdate",
+      {
+        coins: latestUser?.coins || 0,
+        exposure: userCalculated?.exposure || 0,
+        profitLoss: userCalculated?.profitLoss || 0,
+        creditReference: userCalculated?.creditReference || 0,
+      },
+      userData.userId
+    );
+
+    // ============================================================
+    // 15. SUCCESS
+    // ============================================================
+
+    return returnResponse("success", msg("transaction.coinsUpdatedSuccess"), returnData);
+
+  } catch (error) {
+    console.error("UpdateUserCoins error:", error?.message || error);
+
+    if (error?.message === "INSUFFICIENT_COINS") {
+      return returnResponse("error", msg("transaction.insufficientCoins"));
+    }
+    if (error?.message === "RECEIVER_UPDATE_FAILED") {
+      return returnResponse("error", msg("transaction.receiverUpdateFailed"));
+    }
+    if (error?.message === "NEGATIVE_COINS_DETECTED") {
+      return returnResponse("error", msg("transaction.negativeCoinsDropped"));
+    }
+
+    return returnResponse("error", msg("transaction.coinsUpdateFailed"));
+
+  } finally {
+    await session.endSession();
+  }
+};
+
+const updateCoinsTbl = async (userId, userType) => {
+  const userCoins = await GetUserCoins(userId, userType);
+
+  if (!userCoins) {
+    console.error("updateCoinsTbl: GetUserCoins returned null for userId:", userId);
+    return null;
   }
 
+  const totalCoins = userCoins.totalCoins || 0;
+  const exposure = userCoins.exposure || 0;
+  const profitLoss = userCoins.profitLoss || 0;
+  const creditReference = userCoins.creditReference || 0;
 
+  const setObj = {
+    coins: totalCoins,
+    exposure: exposure,
+    profitLoss: profitLoss,
+    totalProfitLoss: profitLoss,
+    creditReference: creditReference,
+  };
 
-  let [creatorData ,  realUserCoins] = await Promise.all([UserModel.findOne(
-    {
-      _id: userData.creatorId,
-      status: 1,
-      isDeleted: false,
+  try {
+    await UserModel.updateOne(
+      { _id: userId },
+      { $set: setObj }
+    );
 
-      [parentUserIdType]: parentData.userId,
-    },
-    {
-      userType: 1,
-      username: 1,
-      coins: 1,
-      transactionPassword: 1,
-      name: 1,
-      userId: 1,
-      clientId: 1,
-      agentId: 1,
-      superagentId: 1,
-      masterId: 1,
-      subadminId: 1,
-      adminId: 1,
-      superadminId: 1,
-      subownerId: 1,
-      ownerId: 1,
+    if (siteSetting.IS_REDIS) {
+      await client.hmset(
+        userId + "",
+        "coins", totalCoins,
+        "exposure", exposure,
+        "profitLoss", profitLoss,
+        "creditReference", creditReference
+      );
     }
-  ),
-    getUserCoinsByTransactionTable(userId)
-  ])
 
+    const updateData = {
+      coins: totalCoins,
+      exposure: exposure,
+      profitLoss: profitLoss,
+      creditReference: creditReference,
+    };
 
-  //_d(realUserCoins , "realUserCoins")
-  if (!creatorData) {
-    return "error", "Creator is inactive, Please active first.";
-  }
+    emitToUser("coinUpdate", updateData, userId);
 
-  if (settingData.isTransactionPassword && settingData.isTransactionPassword == true) {
-    if (!transactionPassword) {
-      return returnResponse("error", "Transaction Password Is required");
-    }
-    const isTransactionPasswordCorrect =  await checkUserTransactionPassword(creatorData.userId , transactionPassword,
-      creatorData.transactionPassword)
-    if (!isTransactionPasswordCorrect) {
-      return returnResponse("error", "Transaction Password Is Wrong");
-    }
-  }
-
-  const creatorCoins = creatorData.coins;
-
-  let userCoins = userData.coins;
-  if(realUserCoins && realUserCoins.totalCoins){
-    userCoins = realUserCoins.totalCoins
-  }
-  
-  const updateCoinsWithoutSign = Math.abs(coins);
-
-  if (coins < 0 && updateCoinsWithoutSign > userCoins) {
-    return returnResponse(
-      "error",
-      `Maximum ${userCoins} coins can be debited for user: ${userData.username}`
+  } catch (error) {
+    console.error(
+      "updateCoinsTbl error for userId:", userId, error
     );
   }
-
-  if (coins > 0) {
-    if (coins > creatorCoins) {
-      return returnResponse("error", "User doesn't have sufficient coins.");
-    }
-  }
-
-  if (userData.userType == "client") {
-    let checkBet = await gameBetValidaterRedis(userId, "check")
-    if (checkBet) {
-      return returnResponse("error", "User is placing bet, Please try after some time.");
-    }
-  }
-
-
-
-  let creatorDepositWithdrawType = `deposit to ${userData.username}`;
-  let userDepositWithdrawType = `deposit to ${userData.username}`;
-
-  let userStatementStatus = "deposit";
-
-  const creatorUsertypeId = `${creatorData.userType}Id`;
-  let creatorCoinsUpdated = coins * -1;
-
-  if (creatorCoinsUpdated > 0) {
-    creatorDepositWithdrawType = `withdraw from  ${userData.username}`;
-  }
-
-  const creatorTransaction = await TransactionLogModel.create({
-    userId: userData.creatorId,
-    userType: creatorCoins.userType,
-    amount: creatorCoinsUpdated,
-    overallType: "depositWithdraw",
-    // remarks: `Coins updated from ${parseFloat(creatorCoins)} to ${parseFloat(
-    //   creatorCoinsUpdated + creatorCoins,
-    remarks: `${creatorDepositWithdrawType}`,
-    [creatorUsertypeId]: creatorData.userId,
-    userType: creatorData.userType,
-    isDeclare: 1, 
-  });
-
-  returnData.creatorTransactionId = creatorTransaction._id
-
-
-
-  let statementDataCreator = {
-    transactionId: creatorTransaction._id,
-    amount: creatorCoinsUpdated,
-    oldAmount: creatorCoins,
-    newAmount: creatorCoinsUpdated + creatorCoins,
-    statementFor: constant.ACCOUNT_STATEMENT,
-    userRemark: userRemark,
-    remark: `Coins updated to ${userData.name} ( ${userData.username} ) by ${parentData.username}`,
-  };
-
-  //_dx(statementDataCreator);
-
-
-
-  // await updateCoinsTbl(userData.creatorId, creatorData.userType);
-
-  const updatedUserCoins = userCoins + parseInt(coins);
-
-  const UsertypeId = `${userData.userType}Id`;
-
-  if (coins < 0) {
-    userDepositWithdrawType = `withdraw from  ${userData.username}`;
-    userStatementStatus = "withdraw";
-  }
-
-  const userTransaction = await TransactionLogModel.create({
-    userId,
-    amount: coins,
-    overallType: "depositWithdraw",
-    userType: userData.userType,
-    remarks: `${userDepositWithdrawType}`,
-    [UsertypeId]: userData.userId,
-    isDeclare: 1,
-  });
-
-  returnData.userTransactionId = userTransaction._id
-
-
-  let statementDataUser = {
-    transactionId: userTransaction._id,
-    amount: coins,
-    oldAmount: userCoins,
-    newAmount: updatedUserCoins,
-    userRemark: userRemark,
-    statementFor: constant.ACCOUNT_STATEMENT,
-    remark: `Coins ${userStatementStatus} from ${parseFloat(
-      userCoins
-    )} to ${parseFloat(updatedUserCoins)}  AND Received From ${
-      creatorData.name
-    } (${creatorData.username}) by ${parentData.username}-(${parentData.name})`,
-  };
-
-
-  
-
-
-
-
-  creatorData.coins = updatedUserCoins;
-
-
-
-    let crickArray = [];
-    let COINS_DIVIDER = 100
-    if(process.env.COINS_DIVIDER){
-      COINS_DIVIDER = process.env.COINS_DIVIDER
-    }
-
-    let creatorRemarkCrick = `${userRemark}[${
-      creatorCoinsUpdated > 0 ? "Withdraw From" : "Deposit To"
-    }  ${userData.username} by ${creatorData.username} of ${Math.abs(
-      Math.round(creatorCoinsUpdated / COINS_DIVIDER , 2)
-    )}- (${_date_time()})]`;
-
-
-    let crickCreatorTransaction = {
-      amount: creatorCoinsUpdated,
-      [creatorData.userType+"ProfitLoss"] : creatorCoinsUpdated,
-      transactionType: "depositWithdrawal",
-      remarks: creatorRemarkCrick,
-      userId: creatorData.userId,
-      creatorId: creatorData.userId,
-      [creatorData.userType+"Id"] : creatorData.userId,
-      [`${creatorData.userType}ProfitLoss`]: creatorCoinsUpdated,
-    };
-
-
-    if(isCash){
-      crickCreatorTransaction.isCash = isCash
-    }
-
-    
-    
-    let userRemarkCrick = `${userRemark}[${
-      coins < 0 ? "Withdraw From" : "Deposit To"
-    }  ${userData.username} by ${creatorData.username} of ${Math.abs(
-      Math.round(coins / COINS_DIVIDER , 2)
-    )} - (${_date_time()})]`;
-
-    let crickUserTransaction = {
-      amount: coins,
-      transactionType: "depositWithdrawal",
-      remarks: userRemarkCrick,
-      userId: userData.userId,
-      creatorId: creatorData._id,
-      [userData.userType+"Id"] : userData.userId,
-      [`${userData.userType}ProfitLoss`]: coins,
-    };
-
-    if(isCash){
-      crickUserTransaction.isCash = isCash
-    }
-  
-  
-  
-  let [ crickTransactionCreator , crickTransactionUser ] =  await Promise.all([ 
-       crickTransactionLModel.create(crickCreatorTransaction),
-       crickTransactionLModel.create(crickUserTransaction),
-  ])
-
-    
-  let [ crestorUpdateData , userUpdateData , userStatement , creatorStatement] =  await Promise.all([ 
-       updateCoinsTbl(userData.creatorId, creatorData.userType),
-       updateCoinsTbl(userId, userData.userType),
-       InsertUserStatement(statementDataUser, userData),
-       InsertUserStatement(statementDataCreator, creatorData)
-  ])
-  
-  returnData.crickTransactionCreatorId = crickTransactionCreator._id
-  returnData.crickTransactionUserId = crickTransactionUser._id
-  returnData.userStatementId = userStatement._id
-  returnData.creatorStatementId = creatorStatement._id
-
-   if (!onCreate && siteSetting.IS_REDIS) {
-    await updateCoinsAndExposure(userData.userId);
-  }
-
-
-
-
-  
-  return returnResponse("success", "Coins Updated Successfully" , returnData);
+  return userCoins;
 };
+
+async function GetUserCoins(id, userType) {
+  // Check Redis cache first (3 sec TTL)
+  // const cacheKey = `getUserCoins:${id}`;
+  // if (siteSetting.IS_REDIS) {
+  //   try {
+  //     const cached = await client.get(cacheKey);
+  //     if (cached) return JSON.parse(cached);
+  //   } catch (_) {}
+  // }
+
+  if (!userType) {
+    const userData = await UserModel.findOne({ _id: id }, { userType: 1 }).lean();
+    if (!userData) {
+      console.error("GetUserCoins: user not found for id:", id);
+      return null;
+    }
+    userType = userData.userType;
+  }
+
+  let groupCond = {
+    _id: "$userId",
+    totalCoins: { $sum: "$amount" },
+    exposure: {
+      $sum: {
+        $cond: [
+          {
+            $and: [{ $eq: ["$isDeclare", 0] }, { $eq: ["$forBet", 1] }],
+          },
+          "$amount",
+          0,
+        ],
+      },
+    },
+    profitLoss: {
+      $sum: {
+        $cond: [
+          {
+            $and: [{ $eq: ["$isDeclare", 1] }, { $eq: ["$forBet", 1] }],
+          },
+          "$amount",
+          0,
+        ],
+      },
+    },
+    creditReference: {
+      $sum: {
+        $cond: [
+          {
+            $and: [{ $eq: ["$overallType", "depositWithdraw"] }, { $eq: ["$isCash", false] }],
+          },
+          "$amount",
+          0,
+        ],
+      },
+    },
+  };
+
+  if (userType == "client") {
+    let commCoinShow = true;
+    if (process.env.COMM_COINS_UPDATE_IN_USER_LIST && process.env.COMM_COINS_UPDATE_IN_USER_LIST == "false") {
+      commCoinShow = false;
+    }
+    if (!commCoinShow) {
+      groupCond.totalCoins = {
+        $sum: {
+          $cond: [
+            {
+              $and: [{ $eq: ["$isComm", 0] }],
+            },
+            "$amount",
+            0,
+          ],
+        },
+      };
+    }
+  }
+
+  const transactionPromise = TransactionLogModel.aggregate([
+    { $match: { userId: new ObjectId(id) } },
+    { $group: groupCond },
+  ]);
+
+  const query = { userId: new ObjectId(id), creatorId: { $ne: new ObjectId(id) } };
+  const crickGroup = {
+    _id: "$userId",
+    depositWithdraw: {
+      $sum: {
+        $cond: [
+          {
+            $and: [{ $eq: ["$transactionType", "depositWithdrawal"] }],
+          },
+          "$amount",
+          0,
+        ],
+      },
+    },
+  };
+
+  const crickPromise = crickTransactionLModel.aggregate([
+    { $match: query },
+    { $group: crickGroup },
+  ]);
+
+  const [transactionRes, crickRes] = await Promise.allSettled([
+    transactionPromise,
+    crickPromise,
+  ]);
+
+  let res = [];
+  if (transactionRes.status === "fulfilled") {
+    res = transactionRes.value || [];
+  }
+
+  if (
+    crickRes.status === "fulfilled" &&
+    crickRes.value &&
+    crickRes.value.length
+  ) {
+    const creditReference = crickRes.value[0].depositWithdraw || 0;
+    if (res.length) {
+      res[0].creditReference = creditReference;
+    }
+  }
+
+  // Cache result for 3 seconds
+  const result = res[0];
+  if (result && siteSetting.IS_REDIS) {
+    try {
+      await client.set(cacheKey, JSON.stringify(result), "EX", 3);
+    } catch (_) {}
+  }
+
+  return result;
+}
 
 const updateCoinsAndExposure = async (userId, userData) => {
   try {
     if (!userData) {
-      userData = await UserModel.findOne({
-        userId: userId,
-      });
-      userData = JSON.parse(JSON.stringify(userData));
+      userData = await UserModel.findOne({ userId: userId }).lean();
+    }
+    if (!userData) {
+      console.error("updateCoinsAndExposure: user not found for userId:", userId);
+      return;
     }
     await client.hmset(
       userId + "",
-      "coins",
-      userData?.coins,
-      "status",
-      userData?.status,
-      "isDeleted",
-      userData?.isDeleted,
-      "jwtToken",
-      userData?.jwtToken + ""
+      "coins", userData?.coins || 0,
+      "status", userData?.status,
+      "isDeleted", userData?.isDeleted,
+      "jwtToken", userData?.jwtToken + ""
     );
     if (userData.userType == "client") {
       await client.hmset(
         userId + "",
-        "exposure",
-        userData.exposure,
-        "profitLoss",
-        userData.totalProfitLoss
+        "exposure", userData.exposure || 0,
+        "profitLoss", userData.totalProfitLoss || 0
       );
     }
   } catch (error) {
-    console.log(error);
+    console.error("updateCoinsAndExposure error for userId:", userId, error);
   }
 };
 
@@ -406,22 +808,19 @@ async function insertTransactionLog(userData, logData, matchData, shareData) {
     transactionLog["agentAmount"] = Math.round(
       shareData.agentMatchProfitLossShare * logData.amount
     );
-
   }
-  
 
-  let finalLogData = {
+  const finalLogData = {
     ...transactionLog,
     ...logData,
   };
-
-  
 
   try {
     const transaction = await TransactionLogModel.create(finalLogData);
     return transaction._id;
   } catch (error) {
-    console.log("insert Transaction Helper Error", error);
+    console.error("insertTransactionLog error:", error);
+    throw error;
   }
 }
 
@@ -491,7 +890,8 @@ async function insertTransactionLogCasino(userData, logData, shareData) {
     const transaction = await TransactionLogModel.create(finalLogData);
     return transaction._id;
   } catch (error) {
-    console.log("insert Transaction Helper Error", error);
+    console.error("insertTransactionLogCasino error:", error);
+    throw error;
   }
 }
 
@@ -582,7 +982,8 @@ async function insertInternationalTransactionLogCasino(
     const transaction = await TransactionLogModel.create(finalLogData);
     return transaction._id;
   } catch (error) {
-    console.log("insert Transaction Helper Error", error);
+    console.error("insertInternationalTransactionLogCasino error:", error);
+    throw error;
   }
 }
 
@@ -674,233 +1075,9 @@ async function insertTransactionLogMatka(userData, logData, shareData) {
     const transaction = await TransactionLogModel.create(finalLogData);
     return transaction._id;
   } catch (error) {
-    console.log("insert Transaction Helper Error", error);
+    console.error("insertTransactionLogMatka error:", error);
+    throw error;
   }
-}
-
-const updateCoinsTbl = async (userId, userType) => {
-  const userCoins = await GetUserCoins(userId, userType);
- // _d(userCoins , "userCoins")
-  let setObj = {
-    coins: userCoins.totalCoins,
-    exposure: userCoins.exposure,
-    profitLoss: userCoins.profitLoss,
-    totalProfitLoss: userCoins.profitLoss,
-    creditReference:  userCoins.creditReference ? userCoins.creditReference : 0,
-  };
-
-  try {
-    await UserModel.updateOne(
-    { _id: userId },
-    {
-      $set: setObj,
-    }
-  );
-
-    if (siteSetting.IS_REDIS) {
-      client.hmset(
-        userId + "",
-        "coins",
-        userCoins.totalCoins,
-        "exposure",
-        userCoins.exposure,
-        "profitLoss",
-        userCoins.profitLoss,
-        "creditReference",
-        userCoins.creditReference ? userCoins.creditReference : 0
-      );
-    }
-
-     
-      updateData = {
-            coins: userCoins.totalCoins,
-            exposure: userCoins.exposure,
-            profitLoss: userCoins.profitLoss,
-            creditReference:  userCoins.creditReference ? userCoins.creditReference : 0,
-      }
-    
-       emitToUser("coinUpdate" ,updateData ,  userId)
-     
-
-  } catch (error) {
-    console.log(
-      "save coins and exposure in redis error in transaction helper",
-      error
-    );
-  }
-  return userCoins;
-};
-
-async function GetUserCoins(id, userType) {
-  if (!userType) {
-    const userData = await UserModel.findOne({ _id: id }, { userType: 1 });
-    userType = userData.userType;
-  }
-
-  let userAmountField = `amount`;
-  let groupCond = {
-    _id: "$userId",
-    totalCoins: { $sum: "$amount" },
-    exposure: {
-      $sum: {
-        $cond: [
-          {
-            $and: [{ $eq: ["$isDeclare", 0] }, { $eq: ["$forBet", 1] }],
-          },
-          `$${userAmountField}`,
-          0,
-        ],
-      },
-    },
-
-    profitLoss: {
-      $sum: {
-        $cond: [
-          {
-            $and: [{ $eq: ["$isDeclare", 1] }, { $eq: ["$forBet", 1] }],
-          },
-          `$${userAmountField}`,
-          0,
-        ],
-      },
-    },
-    creditReference: {
-      $sum: {
-        $cond: [
-          {
-            $and: [{ $eq: ["$overallType", "depositWithdraw"] } , { $eq: ["$isCash", false] } ],
-          },
-          `$amount`,
-          0,
-        ],
-      },
-    },
-  };
-
-
-  if (userType == "client") {
-    let commCoinShow = true
-    if(process.env.COMM_COINS_UPDATE_IN_USER_LIST && process.env.COMM_COINS_UPDATE_IN_USER_LIST=="false"){
-      commCoinShow = false
-    }
-    if(!commCoinShow){
-      groupCond.totalCoins = {
-        $sum: {
-          $cond: [
-            {
-              $and: [{ $eq: ["$isComm", 0] }],
-            },
-            `$amount`,
-            0,
-          ],
-        },
-      };
-    }
-  }
-
-
-const transactionPromise = TransactionLogModel.aggregate([
-  {
-    $match: { userId: new ObjectId(id) },
-  },
-  {
-    $group: groupCond,
-  },
-]);
-
-let crickPromise = Promise.resolve(null);
-
-// if (userType === "client") {
-//   const query = { userId : new ObjectId(id)};
-//   const crickGroup = {
-//     _id: "$userId",
-//     depositWithdraw: {
-//       $sum: {
-//         $cond: [
-//           {
-//             $or: [
-//               { $eq: ["$transactionType", "depositWithdrawal"] },
-//               {
-//                 $and: [
-//                   { $eq: ["$transactionType", "ledger"] },
-//                   { $lt: ["$amount", 0] }
-//                 ]
-//               }
-//             ]
-//           },
-//           "$amount",
-//           0
-//         ]
-//       }
-//     }
-//   };
-
-//   crickPromise = crickTransactionLModel.aggregate([
-//     { $match: query },
-//     { $group: crickGroup },
-//   ]);
-// }
-  
-
-
-  const query = { userId : new ObjectId(id) , creatorId : {$ne : new ObjectId(id)}};
-  const crickGroup = {
-    _id: "$userId",
-    depositWithdraw: {
-      $sum: {
-        $cond: [
-          {
-            $and: [{ $eq: ["$transactionType", "depositWithdrawal"] }],
-          },
-          `$amount`,
-          0,
-        ],
-      },
-    },
-  };
-
-  crickPromise = crickTransactionLModel.aggregate([
-    { $match: query },
-    { $group: crickGroup },
-  ]);
-
-
-
-const [transactionRes, crickRes] = await Promise.allSettled([
-  transactionPromise,
-  crickPromise,
-]);
-
-
-let res = [];
-if (transactionRes.status === "fulfilled") {
-  res = transactionRes.value || [];
-}
-
-// if (
-//   userType === "client" &&
-//   crickRes.status === "fulfilled" &&
-//   crickRes.value &&
-//   crickRes.value.length
-// ) {
-//   const creditReference = crickRes.value[0].depositWithdraw || 0;
-//   if (res.length) {
-//     res[0].creditReference = creditReference;
-//   }
-  // }
-  
-  if (
-  crickRes.status === "fulfilled" &&
-  crickRes.value &&
-  crickRes.value.length
-) {
-  const creditReference = crickRes.value[0].depositWithdraw || 0;
-  if (res.length) {
-    res[0].creditReference = creditReference;
-  }
-}
-  
-  return res[0];
 }
 
 async function GetUserCoinsByMarketId(id, userType, marketId) {
@@ -950,20 +1127,23 @@ async function GetUserCoinsByMarketId(id, userType, marketId) {
 
 const updateAccountCoins = async (userId, userType) => {
   if (!userType) {
-    userData = await UserModel.findOne(
+    const userData = await UserModel.findOne(
       { _id: userId },
-      {
-        userType: 1,
-      }
-    );
+      { userType: 1 }
+    ).lean();
+    if (!userData) {
+      console.error("updateAccountCoins: user not found for userId:", userId);
+      return {};
+    }
     userType = userData.userType;
   }
 
-  let field = `${userType}Id`;
+  const field = `${userType}Id`;
+  const userObjectId = new ObjectId(userId);
 
-  var res = await UserModel.aggregate([
+  const res = await UserModel.aggregate([
     {
-      $match: { [field]: new ObjectId(userId) },
+      $match: { [field]: userObjectId },
     },
     {
       $group: {
@@ -977,8 +1157,8 @@ const updateAccountCoins = async (userId, userType) => {
             $cond: [
               {
                 $and: [
-                  { $eq: [`$${userType}Id`, userId] },
-                  { $ne: ["$_id", userId] },
+                  { $eq: [`$${userType}Id`, userObjectId] },
+                  { $ne: ["$_id", userObjectId] },
                 ],
               },
               "$exposure",
@@ -991,8 +1171,8 @@ const updateAccountCoins = async (userId, userType) => {
             $cond: [
               {
                 $and: [
-                  { $eq: [`$${userType}Id`, userId] },
-                  { $ne: ["$_id", userId] },
+                  { $eq: [`$${userType}Id`, userObjectId] },
+                  { $ne: ["$_id", userObjectId] },
                 ],
               },
               "$totalProfitLoss",
@@ -1005,8 +1185,8 @@ const updateAccountCoins = async (userId, userType) => {
             $cond: [
               {
                 $and: [
-                  { $eq: [`$${userType}Id`, userId] },
-                  { $ne: ["$_id", userId] },
+                  { $eq: [`$${userType}Id`, userObjectId] },
+                  { $ne: ["$_id", userObjectId] },
                 ],
               },
               "$creditReference",
@@ -1019,8 +1199,8 @@ const updateAccountCoins = async (userId, userType) => {
             $cond: [
               {
                 $and: [
-                  { $eq: [`$${userType}Id`, userId] },
-                  { $ne: ["$_id", userId] },
+                  { $eq: [`$${userType}Id`, userObjectId] },
+                  { $ne: ["$_id", userObjectId] },
                 ],
               },
               "$coins",
@@ -1032,24 +1212,23 @@ const updateAccountCoins = async (userId, userType) => {
     },
   ]);
 
-
-const updateData = res[0];
-let returnData = {}
-  if(res[0]){
-   let updateObject = {
+  let returnData = {};
+  if (res[0]) {
+    const updateData = res[0];
+    const updateObject = {
       userId: userId,
-      UpperLevelCreditReffrence: updateData?.userCreditReference,
-      DownLevelCreditReffrence: updateData?.totalDownLevelCreditReference,
-      totalMasterBalance: updateData?.userCoins,
+      UpperLevelCreditReffrence: updateData?.userCreditReference || 0,
+      DownLevelCreditReffrence: updateData?.totalDownLevelCreditReference || 0,
+      totalMasterBalance: updateData?.userCoins || 0,
       upperLevel: 0,
-      downLevelProfitLoss: updateData?.totalDownLevelProfitLoss,
-      downlLevelOccupancyBalance: updateData?.totalDownLevelAvailableBalance,
-      availableBalance: updateData?.userCoins,
+      downLevelProfitLoss: updateData?.totalDownLevelProfitLoss || 0,
+      downlLevelOccupancyBalance: updateData?.totalDownLevelAvailableBalance || 0,
+      availableBalance: updateData?.userCoins || 0,
       availableBalanceProfitLoss:
-        parseInt(updateData.userCoins) + updateData.userProfitLoss,
-      userProfitLoss: updateData?.userProfitLoss,
+        Number(updateData.userCoins || 0) + Number(updateData.userProfitLoss || 0),
+      userProfitLoss: updateData?.userProfitLoss || 0,
     };
-  
+
     try {
       await client.hmset(
         userId + "",
@@ -1057,25 +1236,22 @@ let returnData = {}
         JSON.stringify(updateObject)
       );
     } catch (error) {
-      console.log(
-        "Save Account Details in redis error in transaction helper ",
-        error
-      );
+      console.error("updateAccountCoins redis error for userId:", userId, error);
     }
+
     await AccountCoins.updateOne({ _id: userId }, updateObject, {
       upsert: true,
     });
 
-    returnData = updateObject
+    returnData = updateObject;
   }
 
   return returnData;
 };
 
-const getSessionPositionByTransaction = async (userData, selectionId , marketId) => {
+const getSessionPositionByTransaction = async (userData, selectionId, marketId) => {
   const id = userData.userId;
-  selectionId = selectionId
-  var res = await TransactionLogModel.aggregate([
+  const res = await TransactionLogModel.aggregate([
     {
       $match: { userId: new ObjectId(id), selectionId: selectionId  , marketId : marketId},
     },
@@ -1098,8 +1274,7 @@ const updateBulkCoinsExposureUserByMarketId = async (
   marketId,
   selectionId
 ) => {
-  let startTime = new Date();
-  let playWhere = {
+  const playWhere = {
     userId: {
       $in: userWhere,
     },
@@ -1178,8 +1353,6 @@ const updateBulkCoinsExposureUserByMarketId = async (
     playBulkWrite: {},
   };
 
-startTime = new Date();
-
 const batchSize = 500; 
 const batches = chunkArrayNew(updateOperations, batchSize);
 const updatePromises = batches.map((batch, index) => {
@@ -1231,15 +1404,13 @@ const updateCoinsExposureProfitLossToRedisAndSocket = async (
     );
     
     if (siteSetting.IS_SOCKET) {
-      let userArray = [];
-      updateUserData.map(async (user) => {
-        let userId = user._id;
-        let updateData  = {
+      updateUserData.forEach((user) => {
+        const updateData = {
           coins: user.coins,
           exposure: user.exposure,
           profitLoss: user.totalProfitLoss,
-        }
-        emitToUser("coinUpdate",updateData,userId)
+        };
+        emitToUser("coinUpdate", updateData, user._id);
       });
     }
 
@@ -1688,15 +1859,29 @@ const wholeTransactionMarketData = async (
 };
 
 async function downlineCount(userData) {
-  if (!userType) {
-    const userData = await UserModel.findOne({ _id: id }, { userType: 1 });
-    userType = userData.userType;
+  let userType = userData?.userType;
+  const id = userData?._id || userData?.userId;
+
+  if (!id) {
+    console.error("downlineCount: no valid id provided");
+    return null;
   }
+
+  if (!userType) {
+    const foundUser = await UserModel.findOne({ _id: id }, { userType: 1 }).lean();
+    if (!foundUser) {
+      console.error("downlineCount: user not found for id:", id);
+      return null;
+    }
+    userType = foundUser.userType;
+  }
+
   let userAmountField = `${userType}Amount`;
   if (userType == "client") {
     userAmountField = "amount";
   }
-  var res = await TransactionLogModel.aggregate([
+
+  const res = await TransactionLogModel.aggregate([
     {
       $match: { userId: new ObjectId(id) },
     },
@@ -1729,8 +1914,8 @@ async function downlineCount(userData) {
       },
     },
   ]);
-  // return res?.[0]?.totalCoins;
-  return res[0];
+
+  return res[0] || null;
 }
 
 const casinoReportByUser = async (bodyData, userData) => {
@@ -1813,119 +1998,110 @@ const userIntCasinoExpoLimit = async (
   userData,
   creatorData
 ) => {
-  const IS_REDIS = process.env.IS_REDIS;
-  if (!userData) {
-    userData = await UserModel.findOne({ userId: userId });
-  }
+  try {
+    const IS_REDIS = process.env.IS_REDIS;
+    if (!userData) {
+      userData = await UserModel.findOne({ userId: userId }).lean();
+    }
 
-  if (!creatorData) {
-    const creatorId = userData.creatorId;
-    creatorData = await UserModel.findOne({ userId: creatorId });
-  }
+    if (!creatorData) {
+      const creatorId = userData.creatorId;
+      creatorData = await UserModel.findOne({ userId: creatorId }).lean();
+    }
 
-  let userExpoLimit = userData.intCasinoExpoLimit;
-  let creatorExpoLimit = creatorData.intCasinoExpoLimit;
+    let userExpoLimit = userData.intCasinoExpoLimit || 0;
+    let creatorExpoLimit = creatorData.intCasinoExpoLimit || 0;
 
-  if (!creatorExpoLimit) {
-    creatorExpoLimit = 0;
-  }
-  if (!userExpoLimit) {
-    userExpoLimit = 0;
-  }
+    if (amount > 0 && amount > creatorExpoLimit) {
+      return returnResponse("error", "insufficient Int Exposure Limit");
+    }
 
-  if (amount > 0 && amount > creatorExpoLimit) {
-    return returnResponse("error", "insufficient Int Exposure Limit");
-  }
+    if (amount < 0 && Math.abs(amount) > userExpoLimit) {
+      return returnResponse(
+        "error",
+        "Int Exposure Limit can not be less than userExpo Limit"
+      );
+    }
 
-  if (amount < 0 && Math.abs(amount) > userExpoLimit) {
+    // User expo entry
+    const userExpoObj = {
+      amount: amount,
+      userId: userId,
+      clientId: userData.clientId,
+      agentId: userData.agentId,
+      superagentId: userData.superagentId,
+      masterId: userData.masterId,
+      subadminId: userData.subadminId,
+      adminId: userData.adminId,
+      superadminId: userData.superadminId,
+      subownerId: userData.subownerId,
+      ownerId: userData.ownerId,
+      userType: userData.userType,
+      doneBy: `${creatorData.name} (${creatorData.username})`,
+      remark: `${creatorData.name} (${creatorData.username}) ${
+        amount < 0 ? "withdraw" : "deposit"
+      } chips to ${userData.name} (${userData.username})`,
+    };
+
+    await UserInternationExpoLimitModel.create(userExpoObj);
+
+    // Creator expo entry — separate object to avoid mutation
+    const parentAmount = -1 * amount;
+    const creatorExpoObj = {
+      ...userExpoObj,
+      amount: parentAmount,
+      userType: creatorData.userType,
+      userId: creatorData.userId,
+      remark: `${creatorData.name} (${creatorData.username}) ${
+        parentAmount < 0 ? "give" : "take"
+      } chips ${parentAmount < 0 ? "to" : "from"} ${userData.name} (${
+        userData.username
+      })`,
+    };
+
+    await UserInternationExpoLimitModel.create(creatorExpoObj);
+
+    const [totalUserExpoLimit, totalCreatorExpoLimit] = await Promise.all([
+      UserInternationExpoLimitModel.aggregate([
+        { $match: { userId: new ObjectId(userId) } },
+        { $group: { _id: "$userId", userExpoLimit: { $sum: "$amount" } } },
+      ]),
+      UserInternationExpoLimitModel.aggregate([
+        { $match: { userId: new ObjectId(creatorData.userId) } },
+        { $group: { _id: "$userId", creatorExpoLimit: { $sum: "$amount" } } },
+      ]),
+    ]);
+
+    const userExpoValue = totalUserExpoLimit[0]?.userExpoLimit || 0;
+    const creatorExpoValue = totalCreatorExpoLimit[0]?.creatorExpoLimit || 0;
+
+    await Promise.all([
+      UserModel.where("_id", userId).updateOne({
+        $set: { intCasinoExpoLimit: userExpoValue },
+      }),
+      UserModel.where("_id", creatorData.userId).updateOne({
+        $set: { intCasinoExpoLimit: creatorExpoValue },
+      }),
+    ]);
+
+    if (IS_REDIS) {
+      await Promise.all([
+        client.set(`${userId}_INT_EXPO`, userExpoValue),
+        client.expire(`${userId}_INT_EXPO`, 60 * 60 * 24),
+        client.set(`${creatorData.userId}_INT_EXPO`, creatorExpoValue),
+        client.expire(`${creatorData.userId}_INT_EXPO`, 60 * 60 * 24),
+      ]);
+    }
+
     return returnResponse(
-      "error",
-      "Int Exposure Limit can not be less than userExpo Limit"
+      "success",
+      "exposure limit updated successfully",
+      userExpoValue
     );
+  } catch (error) {
+    console.error("userIntCasinoExpoLimit error:", error);
+    return returnResponse("error", "Failed to update exposure limit.");
   }
-
-  let expoObjComm = {
-    amount: amount,
-    userId: userId,
-    clientId: userData.clientId,
-    agentId: userData.agentId,
-    superagentId: userData.superagentId,
-    masterId: userData.masterId,
-    subadminId: userData.subadminId,
-    adminId: userData.adminId,
-    superadminId: userData.superadminId,
-    subownerId: userData.subownerId,
-    ownerId: userData.ownerId,
-    userType: userData.userType,
-    doneBy: `${creatorData.name} (${creatorData.username})`,
-    remark: `${creatorData.name} (${creatorData.username}) ${
-      amount < 0 ? "withdraw" : "deposit"
-    } chips to ${userData.name} (${userData.username})`,
-  };
-
-  await UserInternationExpoLimitModel.create(expoObjComm);
-  let parentAmount = -1 * amount;
-  expoObjComm.amount = parentAmount;
-  expoObjComm.userType = creatorData.userType;
-  expoObjComm.userId = creatorData.userId;
-  expoObjComm.remark = `${creatorData.name} (${creatorData.username}) ${
-    parentAmount < 0 ? "give" : "take"
-  } chips ${parentAmount < 0 ? "to" : "from"} ${userData.name} (${
-    userData.username
-  })`;
-
-  await UserInternationExpoLimitModel.create(expoObjComm);
-
-  var totalUserExpoLimit = await UserInternationExpoLimitModel.aggregate([
-    {
-      $match: { userId: new ObjectId(userId) },
-    },
-    {
-      $group: {
-        _id: "$userId",
-        userExpoLimit: { $sum: "$amount" },
-      },
-    },
-  ]);
-
-  await UserModel.where("_id", userId).updateOne({
-    $set: { intCasinoExpoLimit: totalUserExpoLimit[0].userExpoLimit },
-  });
-
-  if (IS_REDIS) {
-    await client.set(`${userId}_INT_EXPO`, totalUserExpoLimit[0]);
-    await client.expire(`${userId}_INT_EXPO`, 60 * 60 * 60 * 24);
-  }
-
-  var totalCreatorExpoLimit = await UserInternationExpoLimitModel.aggregate([
-    {
-      $match: { userId: new ObjectId(creatorData.userId) },
-    },
-    {
-      $group: {
-        _id: "$userId",
-        creatorExpoLimit: { $sum: "$amount" },
-      },
-    },
-  ]);
-
-  await UserModel.where("_id", creatorData.userId).updateOne({
-    $set: { intCasinoExpoLimit: totalCreatorExpoLimit[0].creatorExpoLimit },
-  });
-
-  if (IS_REDIS) {
-    await client.set(
-      `${creatorData.userId}_INT_EXPO`,
-      totalCreatorExpoLimit[0]
-    );
-    await client.expire(`${creatorData.userId}_INT_EXPO`, 60 * 60 * 60 * 24);
-  }
-
-  return returnResponse(
-    "success",
-    "exposure limit updated successfully",
-    totalUserExpoLimit[0].userExpoLimit
-  );
 };
 
 const checkIntBetExpoLimit = async (creatorId, creatorType) => {
@@ -2214,7 +2390,7 @@ const checkLastBetTiming = async (
   let returnStatus = true;
   if (lastBetTime) {
     const currentResTime = Date.now();
-    timeDifferenceInSec = (currentResTime - parseInt(lastBetTime)) / 1000;
+    const timeDifferenceInSec = (currentResTime - parseInt(lastBetTime)) / 1000;
     if (checkTimer > timeDifferenceInSec) {
       returnStatus = false;
     }
