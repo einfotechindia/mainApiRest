@@ -2,7 +2,6 @@ const { SendResponse } = require("../../Helpers/ResponseMapper");
 const UserService = require("../../Services/User/User.service");
 const { UpdateUserCoins } = require("../../Helpers/TransactionHelper");
 const { get } = require("../../Helpers/RedisHelper");
-const UserModel = require("../../Models/User/User.model");
 const { _dx } = require("../../Helpers/CommonHelper");
 
 module.exports = {

@@ -1,5 +1,4 @@
 const OddsBetModel = require("../../Models/BetsList/OddsBetsList.model");
-const UserModel = require("../../Models/User/User.model");
 const SportsList = require("../../Models/sportList.model");
 const PlayModel = require("../../Models/Play.model");
 const TransactionLogModel = require("../../Models/TransactionLog.model");
@@ -12,7 +11,7 @@ const sportResultModel = require("../../Models/sportsResult.model");
 const OpenBestModel = require("../../Models/BetsList/OpenBetsList.model");
 const directUserShareModel = require("../../Models/User/directUserShareModel");
 const OddsPositionModel = require("../../Models/BetsList/OddsPosition.model");
-const {emitToUser , emitToMultipleUsers } =  require("../../socket.js")
+const { emitToMultipleUsers } =  require("../../socket.js")
 const { ObjectId } = require("mongodb");
 const BetService = require("./Bet.service");
 const { returnResponse } = require("../../Helpers/ResponseMapper");
@@ -53,7 +52,8 @@ let oddsDecision = async (
   oddsType,
   decisionSelectionId,
   betfairMarketId,
-  wonTeamName = ""
+  wonTeamName = "",
+  decisionSelectionIdArray = []
 ) => {
   try {
     if (!matchData || !decisionSelectionId) {
@@ -110,6 +110,7 @@ let oddsDecision = async (
       });
 
       resultMarketData = marketResultData;
+
       if (decisionSelectionId == "abonded") {
         wonTeamName = decisionSelectionId;
         matchData.wonTeamName = decisionSelectionId;
@@ -161,45 +162,84 @@ let oddsDecision = async (
       }
 
 
-      // _d(oddsData.type , "oddsData.type")
-      // _d(decisionSelectionId , "decisionSelectionId")
-      // _d(oddsData.selectionId , "oddsData.selectionId")
-     
 
-      if (!oddsData.isDeleted) {
+      let multiDecision = false
+      let decisionLength = 0
+      if (decisionSelectionIdArray && decisionSelectionIdArray.length > 1) {
+        multiDecision = true
+        decisionLength = decisionSelectionIdArray.length
+      }
+
+      if (!oddsData.isDeleted && !multiDecision) {
         if (
           (oddsData.type == "K" || oddsData.type == "k") &&
-          oddsData.selectionId == decisionSelectionId
+          (oddsData.selectionId == decisionSelectionId)
         ) {
           finalClientArray[oddsData.userId].profitLoss +=
             -1 * oddsData.amount * oddsData.odds;
         }
         if (
           (oddsData.type == "K" || oddsData.type == "k") &&
-          oddsData.selectionId != decisionSelectionId
+          (oddsData.selectionId != decisionSelectionId)
         ) {
           finalClientArray[oddsData.userId].profitLoss += oddsData.amount;
         }
         if (
           oddsData.type == "L" &&
-          oddsData.selectionId == decisionSelectionId
+          (oddsData.selectionId == decisionSelectionId)
         ) {
           finalClientArray[oddsData.userId].profitLoss +=
             oddsData.amount * oddsData.odds;
         }
         if (
           oddsData.type == "L" &&
-          oddsData.selectionId != decisionSelectionId
+          (oddsData.selectionId != decisionSelectionId)
         ) {
           
           finalClientArray[oddsData.userId].profitLoss += -1 * oddsData.amount;
         }
       }
+
+      
+      if (!oddsData.isDeleted && multiDecision) {
+        let finalProfitLoss = 0
+          if (
+            (oddsData.type == "K" || oddsData.type == "k") &&
+            (decisionSelectionIdArray.includes(oddsData.selectionId))
+          ) {
+            finalProfitLoss =
+              -1 * oddsData.amount * oddsData.odds;
+          }
+          if (
+            (oddsData.type == "K" || oddsData.type == "k") &&
+            (!decisionSelectionIdArray.includes(oddsData.selectionId))
+          ) {
+            finalProfitLoss = oddsData.amount;
+          }
+          if (
+            oddsData.type == "L" &&
+            (decisionSelectionIdArray.includes(oddsData.selectionId))
+          ) {
+            finalProfitLoss =
+              oddsData.amount * oddsData.odds;
+          }
+          if (
+            oddsData.type == "L" &&
+            (!decisionSelectionIdArray.includes(oddsData.selectionId))
+          ) {
+            finalProfitLoss = -1 * oddsData.amount;
+          }
+
+
+         finalClientArray[oddsData.userId].profitLoss += finalProfitLoss > 0 ? (finalProfitLoss / decisionLength) : finalProfitLoss;
+      }
+      
+      
+      
     });
 
-
-    //_dx(finalClientArray, "finalClientArray")
     
+
     let playWhere = {
       clientId: {
         $in: uniqueClientData,
@@ -545,24 +585,14 @@ let oddsDecision = async (
       };
     }
 
-    await TransactionLogModel.deleteMany(transactionDeleteWhere);
-    let chunks = chunkArrayNew(insertTransactionLog, 2000);
-    for (const chunk of chunks) {
-
-   // _d(chunk , "chunk")
-
+      await TransactionLogModel.deleteMany(transactionDeleteWhere);
+      let chunks = chunkArrayNew(insertTransactionLog, 2000);
+      for (const chunk of chunks) {
       await TransactionLogModel.insertMany(chunk);
+
     }
 
-    let isCrickTransaction = false;
-    if (
-      process.env.IS_CRICK_TRANSACTION &&
-      process.env.IS_CRICK_TRANSACTION == "true"
-    ) {
-      isCrickTransaction = true;
-    }
-
-    if (isCrickTransaction) {
+  
       await CrickTransactionLogModel.deleteMany({
         marketId: marketId,
         marketType: oddsType,
@@ -571,7 +601,7 @@ let oddsDecision = async (
       for (const chunk of crickChunks) {
         await CrickTransactionLogModel.insertMany(chunk);
       }
-    }
+    
 
     let statementDeleteWhere = {
       marketId: marketId,
@@ -622,11 +652,14 @@ let oddsDecision = async (
       decisionSelectionId: decisionSelectionId,
       isDeclare: 1,
       wonTeamName: wonTeamName,
+      decisionSelectionIdArray : decisionSelectionIdArray ? decisionSelectionIdArray : [decisionSelectionId+""]
     };
+
     const updateOddsWhere = { marketId: marketId, oddsType: oddsType };
     if (betfairDecision) {
       updateOddsWhere.betfairMarketId = betfairMarketId;
     }
+
     const updateBets = await OddsBetModel.updateMany(updateOddsWhere, {
       $set: updateOdds,
     });

@@ -1,4 +1,3 @@
-const { ObjectId } = require("mongodb");
 const UserModel = require("../../Models/User/User.model");
 const ShareModel = require("../../Models/User/Share.model");
 const TransactionLogModel = require("../../Models/TransactionLog.model");
@@ -124,46 +123,38 @@ const finalOddsDataDeconstruct = async (
     );
   }
 
-  if (casinoType == "lucky7eu" || casinoType == "lucky7") {
-    let betFor = bodyData.betFor;
 
-    if (betFor == "lowHigh") {
-      filteredData = oddsData.filter(
-        (item) => item.sid === "1" || item.sid === "2"
-      );
+
+
+ 
+    if (["lucky7eu", "lucky7", "lucky5"].includes(casinoType)) {
+      const betFor = bodyData.betFor;
+      if (!Array.isArray(oddsData)) {
+        filteredData = [];
+      } else {
+        filteredData = oddsData.filter((item) => {
+          const sid = Number(item.sid);
+          switch (betFor) {
+            case "lowHigh":
+              return sid === 1 || sid === 2;
+
+            case "color":
+              return sid >= 5 && sid <= 6;
+
+            case "oddEven":
+              return sid >= 3 && sid <= 4;
+
+            case "cards":
+              return sid >= 7 && sid <= 19;
+
+            default:
+              return false;
+          }
+        });
+      }
     }
 
-    if (betFor == "color") {
-      filteredData = oddsData.filter(
-        (item) => item.sid >= "5" && item.sid <= "6"
-      );
-    }
-
-    if (betFor == "oddEven") {
-      filteredData = oddsData.filter(
-        (item) => item.sid >= "3" && item.sid <= "4"
-      );
-    }
-
-    if (betFor == "cards") {
-      filteredData = oddsData.filter(
-        (item) =>
-          item.sid === "7" ||
-          item.sid === "8" ||
-          item.sid === "9" ||
-          item.sid === "10" ||
-          item.sid === "11" ||
-          item.sid === "12" ||
-          item.sid === "13" ||
-          item.sid === "14" ||
-          item.sid === "15" ||
-          item.sid === "16" ||
-          item.sid === "17" ||
-          item.sid === "18" ||
-          item.sid === "19"
-      );
-    }
-  }
+  //_dx(filteredData ,"filteredData")
 
   if (casinoType == "aaa") {
     let betFor = bodyData.betFor;
@@ -296,20 +287,85 @@ const finalOddsDataDeconstruct = async (
     filteredData = oddsData.filter((item) => item.nat == bodyData.nat);
   }
 
-  if (casinoType == "goal") {
+ 
+  if (
+    casinoType == "goal2" ||
+    casinoType == "goal" ||
+    casinoType == "mogambo" || 
+    casinoType == "joker120" ||
+    casinoType == "btable2"
+  ) {
     let betFor = bodyData.betFor;
-    if (betFor == "match") {
-      filteredData = oddsData.filter(
+    filteredData = oddsData.filter(
         (item) =>
-          item.subtype === "match" 
-      );
-    } else if (betFor == "player") {
-      filteredData = oddsData.filter((item) => item.subtype == "player");
-    } else {
-      filteredData = [];
+          item.subtype === betFor
+    );
+    
+    if (!filteredData) {
+       filteredData = [];
     }
   }
 
+  if (
+    casinoType == "race20"
+  ) {
+    let betFor = bodyData.betFor;
+    if (betFor == "cards") { 
+      filteredData = oddsData.filter(
+        (item) =>
+          item.sid === "1" ||
+          item.sid === "2" ||
+          item.sid === "3" ||
+          item.sid === "4"
+      );
+    } else {
+      filteredData = oddsData.filter(
+        (item) =>
+          item.nat.toLowerCase() === betFor.toLowerCase()
+     );
+    }
+  }
+
+  //  if (
+  //   casinoType == "btable"
+  // ) {
+  //   let betFor = bodyData.betFor;
+  //   if (betFor == "odds") {
+  //     filteredData = oddsData.filter(
+  //       (item) =>
+  //         item.sid === "1" ||
+  //         item.sid === "2" ||
+  //         item.sid === "3" ||
+  //         item.sid === "4" ||
+  //         item.sid === "5" ||
+  //         item.sid === "6"
+  //     );
+  //   } else {
+  //     filteredData = oddsData.filter(
+  //       (item) =>
+  //         item.nat.toLowerCase() === betFor.toLowerCase()
+  //    );
+  //   }
+  // }
+  
+   if (
+    casinoType == "btable"
+  ) {
+    let betFor = bodyData.betFor;
+    filteredData = oddsData.filter(
+        (item) =>
+          item.gtype === betFor
+    );
+   }
+  
+
+  if (!filteredData) {
+       filteredData = [];
+  }
+  
+  
+
+ // _dx(filteredData, "filteredData")
   return filteredData;
 };
 
@@ -331,19 +387,21 @@ let checkCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) => {
   if (casinoApiData.data && casinoApiData.data.t1) {
     const t1Data = casinoApiData.data.t1;
     roundId = t1Data[0]?.mid;
-      if (t1Data[0]?.autotime) {
-        autotime = t1Data[0].autotime;
-      }
+    if (t1Data[0]?.autotime) {
+      autotime = t1Data[0].autotime;
+    }
   }
 
 
-   if (autotime < 5) {
-     return returnResponse(
-       "error",
-       "odds Expired ! we can not take bet because odds are expiring soon"
-     );
-    }
+  //_d(autotime, "autotime")
+
   
+  if (autotime < 5) {
+    //  return returnResponse(
+    //    "error",
+    //    "odds Expired ! we can not take bet because odds are expiring soon"
+    //  );
+  }
   
 
   if (casinoApiData.data && casinoApiData.data.t2) {
@@ -362,18 +420,28 @@ let checkCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) => {
     returnRequest = false;
   }
 
-  if (casinoApiData.data  && casinoApiData.data.gtype == "goal") {
+  if (casinoApiData.data &&
+    (casinoApiData.data.gtype == "goal"
+    || casinoApiData.data.gtype == "goal2"
+    || casinoApiData.data.gtype == "mogambo"
+    || casinoApiData.data.gtype == "lucky5"
+    || casinoApiData.data.gtype == "joker120"
+    || casinoApiData.data.gtype == "btable2"
+  )
+  )
+  {
     oddsFinalData = casinoApiData.data.sub
     returnRequest = false;
     roundId = casinoApiData.data.mid;
   }
 
 
-
   if (casinoType == "Teen") {
     oddsFinalData = casinoApiData.data.t1;
     returnRequest = false;
   }
+
+
 
   if (returnRequest) {
     return returnResponse(
@@ -394,6 +462,7 @@ let checkCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) => {
 
   let keyData = await convertKeyObject(oddsFinalData, getBySelectionId);
 
+
   let finalData = {};
   if (keyData[bodyData.sid]) {
     finalData = keyData[bodyData.sid];
@@ -401,6 +470,7 @@ let checkCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) => {
   if (casinoType == "teen9") {
     finalData = keyData[bodyData.nat];
   }
+
 
   if (!finalData) {
     return returnResponse(
@@ -433,9 +503,6 @@ let checkCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) => {
     finalData.rate = finalData.b1;
   }
 
-
-
-
   if (bodyData.isLayBack) {
     finalData.rate =
       bodyData.layBackType == "lay"
@@ -443,9 +510,6 @@ let checkCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) => {
         : Number(finalData.b1);
   }
 
-
-
-  //_d(finalData, "finalData")
   
   if (casinoType == "ballbyball") {
     finalData.rate = bodyData.layBackType == "lay"
@@ -461,21 +525,26 @@ let checkCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) => {
 
 
 
-   if (casinoType == "goal") {
+  if (
+      casinoType == "goal"
+    || casinoType == "goal2"
+    || casinoType == "mogambo"
+    || casinoType == "lucky5"
+    || casinoType == "joker120"
+    || casinoType == "btable2"
+  ) {
     finalData.rate = bodyData.layBackType == "lay"
         ? Number(finalData.l)
       : Number(finalData.b);
     
-    bodyData.roundId = roundId;
+    bodyData.roundId = roundId;2
     bodyData.mid = roundId;
     bodyData.sid = finalData.sid;
     bodyData.rate = finalData.rate;
-    bodyData.betFor = finalData.subtype;
+    if (casinoType != "lucky5") {
+       bodyData.betFor = finalData.subtype;
+    }
   }
-
-
- // _d(bodyData , finalData)
-
 
 
   if (casinoType == "lucky7eu") {
@@ -516,6 +585,11 @@ let checkCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) => {
     }
   }
 
+
+  if (casinoType == "queen" || casinoType == "poker") {
+    bodyData.roundId  = finalData.mid ? finalData.mid : finalData.mid
+  }
+
   bodyData.rate = Number(bodyData.rate);
 
   if (oddsDifference && oddsDifference != 0 && bodyData.layBackType == "back") {
@@ -531,7 +605,9 @@ let checkCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) => {
     finalData.gstatus = 1;
   }
 
+
   finalData.mid = finalData.marketId ? finalData.marketId : finalData.mid;
+
 
   if (
     bodyData.roundId != finalData.mid ||
@@ -542,7 +618,7 @@ let checkCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) => {
     bodyData.rate < 0 ||
     finalData.rate < 0
   ) {
-    return returnResponse("error", "Odds are expired please do bet again");
+     return returnResponse("error", "Odds are expired please do bet again");
   }
 
   oddsFinalData = await finalOddsDataDeconstruct(
@@ -550,9 +626,6 @@ let checkCasinoOdds = async (casinoApiData, bodyData, casinoData = {}) => {
     casinoType,
     bodyData
   );
-
-
-  //_d(oddsFinalData , "oddsFinalData")
 
   if (!oddsFinalData) {
     return returnResponse("error", "something went wrong on oddsFinalData");

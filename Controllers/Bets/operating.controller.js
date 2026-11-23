@@ -1,85 +1,54 @@
-const Joi = require("joi");
-const moment = require("moment");
 const { ObjectId } = require("mongodb");
-const fs = require("fs");
-const axios = require("axios");
 const { SendResponse } = require("../../Helpers/ResponseMapper");
-const {
-  updateBulkCoinsExposureUserByMarketId,
-  wholeTransactionMarketData,
-  CasinoProfitLossAndComm,
-} = require("../../Helpers/TransactionHelper");
+
 const { client } = require("../../Helpers/RedisHelper");
 const { UserTypes, siteSetting, fetchUrl } = require("../../Common/Constants");
 const {
   _dx,
   whereHelper,
   _d,
-  convertKeyObject,
-  fancyCommissionHelper,
-  betfairFancyCommissionHelper,
-  convertKeyObjectAndSeperateid,
   dateWhereCond,
-  _date,
-  _date_time,
-  getSettingData,
-  caclculateTime,
-  chunkArrayNew,
-  commissionProfitLoss
+
 } = require("../../Helpers/CommonHelper");
 
 const matkaBetModel = require("../../Models/Matka/MatkaBets.model");
-const OddsBetModel = require("../../Models/BetsList/OddsBetsList.model");
 const FancyBetModel = require("../../Models/BetsList/FancyBetsList.model");
-const TransactionLogModel = require("../../Models/TransactionLog.model");
-const CrickTransactionLogModel = require("../../Models/crickTransaction.model");
-const StatementModel = require("../../Models/Statement.model");
-const UserModel = require("../../Models/User/User.model");
-const profitLossPosition = require("../../Models/BetsList/profitLossPosition.model");
-const ledgerModel = require("../../Models/Ledger.model");
-const commLedgerModel = require("../../Models/commLedger.model");
-const sportList = require("../../Models/sportList.model");
-const sportsMarketListModel = require("../../Models/sportsMarketList.model");
-const fancyListModel = require("../../Models/fancyList.model");
-const internationalCasinoBetList = require("../../Models/BetsList/InternationalCasinoBetsList.model");
-const directUserShareModel = require("../../Models/User/directUserShareModel");
-const PlayModel = require("../../Models/Play.model");
+
 
 
 const BetService = require("../../Services/Sports/Bet.service");
-const DecisionService = require("../../Services/Sports/Decision.service");
 const { getUserIdByUsername, getShareChainData } = require("../../Helpers/UsersUtils");
 
 getSessionList = async (req, res) => {
-    try {
-        let bodyData = req.body;
-        let marketId = bodyData?.marketId;
-        if(!marketId){
-          return SendResponse(res, "error", "marketId is required");
-        }
-
-        let where = {
-            marketId: marketId
-        }
-
-        if(bodyData.hasOwnProperty("isDeclare")){
-          where.isDeclare = bodyData.isDeclare
-        } 
-
-        if(bodyData.hasOwnProperty("isDeleted")){
-          where.isDeleted = bodyData.isDeleted
-        } 
-
-        if(bodyData.fromDate && bodyData.toDate){
-           where.date = dateWhereCond(bodyData.fromDate, bodyData.toDate)
-        }
-      const SessionList = await BetService.getSessionList(where);
-      return SendResponse(res, "success", "fetch Data", SessionList);
-    } catch (error) {
-      console.log(error);
-      return SendResponse(res, "error", "fetch Data in Session List", error);
+  try {
+    let bodyData = req.body;
+    let marketId = bodyData?.marketId;
+    if (!marketId) {
+      return SendResponse(res, "error", "marketId is required");
     }
-};  
+
+    let where = {
+      marketId: marketId
+    }
+
+    if (bodyData.hasOwnProperty("isDeclare")) {
+      where.isDeclare = bodyData.isDeclare
+    }
+
+    if (bodyData.hasOwnProperty("isDeleted")) {
+      where.isDeleted = bodyData.isDeleted
+    }
+
+    if (bodyData.fromDate && bodyData.toDate) {
+      where.date = dateWhereCond(bodyData.fromDate, bodyData.toDate)
+    }
+    const SessionList = await BetService.getSessionList(where);
+    return SendResponse(res, "success", "fetch Data", SessionList);
+  } catch (error) {
+    console.log(error);
+    return SendResponse(res, "error", "fetch Data in Session List", error);
+  }
+};
 
 const getBetsList = async (req, res) => {
   try {
@@ -93,30 +62,30 @@ const getBetsList = async (req, res) => {
     let matkaBetData = [];
 
     const isClientExposure = Object.prototype.hasOwnProperty.call(bodyData, "isClientExposure");
-    
-    if(bodyData.hasOwnProperty("isDeclare")){
-       where.isDeclare = bodyData.isDeclare;
+
+    if (bodyData.hasOwnProperty("isDeclare")) {
+      where.isDeclare = bodyData.isDeclare;
     }
 
-    if(bodyData.hasOwnProperty("marketId")){
-       where.marketId = bodyData.marketId;
+    if (bodyData.hasOwnProperty("marketId")) {
+      where.marketId = bodyData.marketId;
     }
 
     let inData = [0, false];
     if (bodyData.isDeleted == 1 || bodyData.isDeleted === true) inData = [1, true];
     where.isDeleted = { $in: inData };
 
-   
-  
+
+
     if (bodyData.selectionId) where.selectionId = bodyData.selectionId;
 
     if (bodyData.fromDate && bodyData.toDate) {
       const isTime = detectIsTime(bodyData.fromDate, bodyData.toDate);
       const dateWhere = await dateWhereCond(bodyData.fromDate, bodyData.toDate, false, isTime);
       if (isTime) {
-       where.createdAt = dateWhere;
+        where.createdAt = dateWhere;
       } else {
-        where.date = dateWhere;  
+        where.date = dateWhere;
       }
     }
 
@@ -135,7 +104,7 @@ const getBetsList = async (req, res) => {
 
     if (bodyData.sportId) where.sportId = bodyData.sportId;
 
-    if (bodyData.ip ) {
+    if (bodyData.ip) {
       where.ip = bodyData.ip;
     }
 
@@ -156,7 +125,7 @@ const getBetsList = async (req, res) => {
       }
       where.userId = userData.userDetails.userId;
     }
-    
+
     const amountSort = bodyData.amountSort || false;
     const idSort = bodyData.idSort || false;
 

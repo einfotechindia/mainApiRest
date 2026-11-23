@@ -2,6 +2,7 @@ const { ObjectId } = require("mongodb");
 const DomainModel = require("../Models/Domain.model");
 const SettingModel = require("../Models/Setting.model");
 const internationalCasinoList = require("../Models/internationalCasinoList.model");
+const SportsSettingModel = require("../Models/Sports/SportsSetting.model");
 const { client } = require("../Helpers/RedisHelper");
 
 const moment = require("moment-timezone");
@@ -1462,18 +1463,20 @@ const getWebsiteDataByReq = async (req, isWebsite = true) => {
   let domain = "";
   if (!req.domainName) {
     let headers = req.headers;
-    const hostData = headers.host;
-    const origin = headers.origin;
+    const hostData = headers?.host;
+    const origin = headers?.origin;
     if (origin) {
       const originURL = new URL(origin);
       let domainOriginalData = await extractSubdomainAndDomainByHost(
         originURL.hostname
       );
+
+    //  _dx(domainOriginalData , "domainOriginalData")
       subdomain = domainOriginalData.subdomain;
       domain = domainOriginalData.domain;
     } else {
-      const parts = hostData.split(".");
-      if (parts.length === 3) {
+      const parts = hostData?.split(".");
+      if (parts && parts.length === 3) {
         subdomain = parts[0];
         domain = parts.slice(1).join(".");
       } else {
@@ -2092,6 +2095,100 @@ const gameBetValidaterRedis = async (userId, action = "set") => {
   }
 };
 
+
+const getUserSportsSetting = async (userId) => {
+  const cacheKey = `sportsSetting:${userId}`;
+  let cachedData = await client.get(cacheKey);
+  if (cachedData && cachedData !== "null" && cachedData !== "undefined" && cachedData !== "") {
+    return JSON.parse(cachedData)
+  }
+  let settingData = await SportsSettingModel.findOne({ userId: userId }).lean();
+  if (settingData) {
+    await client.set(cacheKey, JSON.stringify(settingData), "EX", 3600);
+  }
+  return settingData
+};
+
+
+// TalksTry se message bhejna — ek number ya bulk (array), attachment optional.
+//   numbers    : "8114467911" | "+918114467911" | ["...", "..."]  (10 digit ho to +91 lag jata hai)
+//   msg        : message text
+//   attachment : https URL | local file path | "media_..." id | { buffer, fileName, mimeType }
+//   options    : { title, template, variables, eventKey }
+// 24 ghante ki window ke bahar TalksTry sirf approved template leta hai, isliye message
+// TALKSTRY_MESSAGE_TEMPLATE (default "universal_template") se jata hai: {{1}} = title, {{2}} = msg.
+// Kabhi throw nahi karta — har number ka result return hota hai.
+const TALKSTRY_MIME_TYPES = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", mp4: "video/mp4" };
+const sendTalkstryMessage = async (numbers, msg, attachment = null, options = {}) => {
+  const talkstryService = require("../Services/Talkstry/Talkstry.service");
+  const crypto = require("crypto");
+  const path = require("path");
+  const fs = require("fs");
+
+  const list = [...new Set((Array.isArray(numbers) ? numbers : [numbers])
+    .map((n) => String(n || "").replace(/[^\d+]/g, ""))
+    .filter(Boolean)
+    .map((n) => {
+      if (n.startsWith("+")) return n;
+      if (n.length === 10) return "+91" + n;
+      return "+" + n;
+    }))];
+  const result = { total: list.length, sent: 0, failed: 0, results: [] };
+  if (!list.length || !msg) {
+    return { ...result, error: "numbers and msg are required" };
+  }
+
+  const template = {
+    name: options.template || process.env.TALKSTRY_MESSAGE_TEMPLATE || "universal_template",
+    variables: options.variables || [options.title || process.env.PROJECT_NAME || "Notification", String(msg)],
+  };
+
+  // Attachment ek hi baar upload hota hai, phir saare numbers pe wahi media id jati hai
+  if (attachment) {
+    try {
+      if (typeof attachment === "string" && /^https:\/\//i.test(attachment)) {
+        template.header = { mediaUrl: attachment };
+      } else if (typeof attachment === "string" && attachment.startsWith("media_")) {
+        template.header = { mediaId: attachment };
+      } else {
+        const fileData = typeof attachment === "string"
+          ? { buffer: await fs.promises.readFile(attachment), fileName: path.basename(attachment) }
+          : attachment;
+        const ext = path.extname(fileData.fileName || "").slice(1).toLowerCase();
+        const media = await talkstryService.uploadMedia({
+          buffer: fileData.buffer,
+          fileName: fileData.fileName,
+          mimeType: fileData.mimeType || TALKSTRY_MIME_TYPES[ext],
+        });
+        template.header = { mediaId: media.id, mediaFileName: fileData.fileName };
+      }
+    } catch (error) {
+      console.error("sendTalkstryMessage attachment error:", error.message);
+      return { ...result, failed: list.length, error: "Attachment failed: " + error.message };
+    }
+  }
+
+  // eventKey do (e.g. `deposit-${id}`) to retry pe same message dobara nahi jayega
+  const eventKey = options.eventKey || crypto.randomUUID();
+  const sendOne = async (to) => {
+    try {
+      const data = await talkstryService.sendMessage({ to, template, idempotencyKey: `${eventKey}-${to}` });
+      result.sent++;
+      result.results.push({ number: to, success: true, id: data.id, status: data.status });
+    } catch (error) {
+      result.failed++;
+      result.results.push({ number: to, success: false, code: error.code, error: error.message });
+    }
+  };
+
+  // Rate limit ke andar rehne ke liye 5-5 ke batch me
+  for (const batch of chunkArrayNew(list, 5)) {
+    await Promise.all(batch.map(sendOne));
+  }
+  return result;
+};
+
+
 module.exports = {
   _dx,
   _d,
@@ -2127,6 +2224,7 @@ module.exports = {
   commissionProfitLoss,
   isBetweenTime,
   sendWhatsAppMessage,
+  sendTalkstryMessage,
   getTimeDifference,
   betfairFancyCommissionHelper,
   sanitize,
@@ -2136,5 +2234,6 @@ module.exports = {
   parseFilterDate,
   detectIsTime,
   gameBetValidaterRedis,
-  bookmakerCommissionHelper
+  bookmakerCommissionHelper,
+  getUserSportsSetting
 };

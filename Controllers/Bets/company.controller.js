@@ -1,9 +1,7 @@
 const { SendResponse } = require("../../Helpers/ResponseMapper");
 const { client } = require("../../Helpers/RedisHelper");
 const { ObjectId } = require("mongodb");
-var requestIp = require("request-ip");
 const Joi = require("joi");
-const { siteSetting } = require("../../Common/Constants");
 const DomainModel = require("../../Models/Domain.model");
 const {
   UserCreate,

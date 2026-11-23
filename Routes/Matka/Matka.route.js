@@ -5,7 +5,6 @@ const matkaController = require("../../Controllers/matka/Matka.Controller");
 const matkaResultController = require("../../Controllers/matka/matkaResult.controller");
 
 
-
 router.post("/createMatka", verifyToken, matkaController.createMatka);
 router.post("/updateMatka", verifyToken, matkaController.updateMatka);
 router.post("/getMatkaList", verifyToken, matkaController.getMatkaList);

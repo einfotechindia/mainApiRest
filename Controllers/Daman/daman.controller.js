@@ -9,7 +9,6 @@ const {
 } = require("../../Helpers/UsersUtils");
 const { ObjectId } = require("mongodb");
 const Joi = require("joi");
-const { siteSetting } = require("../../Common/Constants");
 const {
   _dx,
   whereHelper,
@@ -24,11 +23,11 @@ const trackingctivites = require("../../Models/User/Tracking.model");
 const BetModel = require("../../Models/BetsList/OddsBetsList.model");
 const FancyBetModel = require("../../Models/BetsList/FancyBetsList.model");
 const casinoBetModel = require("../../Models/BetsList/CasinoBetsList.model");
-const matkaBetModel = require("../../Models/Matka/MatkaBets.model");
 const CrickTransactionLogModel = require("../../Models/crickTransaction.model");
 const StatementModel = require("../../Models/Statement.model");
 const DeleteBetsDataModel = require("../../Models/deleteBetsData.model");
-
+const sportsMarketListModel = require("../../Models/sportsMarketList.model");
+var requestIp = require("request-ip");
 const {
   UpdateUserCoins,
   userIntCasinoExpoLimit,
@@ -36,8 +35,8 @@ const {
   updateCoinsTbl,
   updateBulkCoinsExposureUserByMarketId,
 } = require("../../Helpers/TransactionHelper");
-
-
+const BetService = require("../../Services/Sports/Bet.service");
+const sportListModel = require("../../Models/sportList.model");
 
 const { InsertUserStatement } = require("../../Helpers/StatementHelper");
 
@@ -579,6 +578,10 @@ const deleteTrackingActivities = async (req,res)=>{
 
 const updateBetsData = async (req,res)=>{
   const bodyData = req.body;
+  const loginData = req.loggedInUser
+  let clientIp = requestIp.getClientIp(req);
+
+  
   if(bodyData && !bodyData.betsIdArray){
     return SendResponse(
       res,
@@ -604,14 +607,27 @@ const updateBetsData = async (req,res)=>{
     );
   }
 
+  let positionDataReload = false
+  let userIdAray = []
+  let marketIdArray = []
   let returnData = []
+  let updatatesBetArray = []
+  let oldData  = {}
+  let updateBetsData = {
+    userInfo: loginData,
+    ip : clientIp
+  }
+
   for (const element of betsIdArray) {
   let updateObjReturn = {}
   const betsType = element.betsType;
   const updateObj = element.updateObj || {};
   const userId = new ObjectId(element.userId);
   const betId = new ObjectId(element.betId);
-   if (betsType === "fancy") {
+  delete updateObj.createdAt
+  
+    if (betsType === "fancy") {
+      oldData = await FancyBetModel.findOne({ userId: userId, _id: betId },)
       updateObjReturn = await FancyBetModel.updateOne(
        { userId: userId, _id: betId },
        { $set: updateObj }
@@ -621,21 +637,119 @@ const updateBetsData = async (req,res)=>{
        { userId: userId, _id: betId },
        { $set: updateObj }
      )
-   }
-   returnData.push(updateObjReturn)
+    } else if (betsType === "odds" && updateObj.odds > 0 && updateObj.odds < 2) {
+      
+      oldData = await BetModel.findOne({
+       _id : betId
+      })
+
+      let profit = oldData.profit
+      let loss = oldData.loss
+      let type = updateObj.type
+      let oddsType = oldData.oddsType
+    
+      if (type == "K") {
+        profit = updateObj.amount
+        loss = -1 * updateObj.amount * updateObj.odds
+      } else {
+        profit = updateObj.amount * updateObj.odds
+        loss = -1 * updateObj.amount
+      }
+
+      let positionInfo = {};
+      let positionInfoBet = [];
+
+      updateObj.profit = Number(profit)
+      updateObj.loss = Number(loss)
+      
+      oldData.profit = Number(profit)
+      oldData.loss = Number(loss)
+      oldData.type = updateObj.type
+      oldData.amount = updateObj.amount
+      oldData.odds = updateObj.odds
+      positionInfoBet.push(oldData);
+      let teamData = []
+      let matchData = await sportListModel.findOne({ marketId: oldData?.marketId })
+      let marketListObj = {}
+      let betfairMarketListAll = matchData.marketList ? matchData.marketList : []
+      if (betfairMarketListAll && betfairMarketListAll.length > 0) {
+        betfairMarketListAll.map((mar) => {
+          marketListObj[mar.marketId] = mar
+        })
+      }
+
+        let betfairMarketList = betfairMarketListAll.map(item => item.marketType)
+        let manualMarketArray = [
+          "matchOdds",
+          "tiedMatch",
+          "completeOdds",
+        ]
+      betfairMarketList = [...manualMarketArray, ...betfairMarketList];
+
+        if (betfairMarketList.includes(oddsType) ){                     
+            const marketData = await sportsMarketListModel.findOne({
+              marketId: oldData.betfairMarketId,
+            });
+      
+            if (!marketData) {
+              return SendResponse(res, "error", "marketData not found in database");
+            }
+      
+            const selectionIdData = marketData.selectionIdData;
+            selectionIdData.map((selection) => {
+              let push = {
+                selection_id: selection.selectionId,
+                runner_name: selection.runnerName,
+              };
+              teamData.push(push);
+            });
+          } else {
+            teamData = JSON.parse(matchData.teamData);
+          }
+      
+      
+      if (teamData) {
+        let positionInfo = await BetService.betsMatchPosition(
+              positionInfoBet,
+          teamData,
+              oddsType
+        );
+        updateObj.positionInfo = positionInfo
+      }
+
+      updateObjReturn = await BetModel.updateOne(
+        { userId: userId, _id: betId },
+        { $set: updateObj }
+      )
+      positionDataReload = true
+
+    }
+    
+    userIdAray.push(userId)
+    returnData.push(updateObjReturn)
+    updateBetsData.betType = betsType
+    updateBetsData.oldData = oldData
+    updateBetsData.updateData = element
+    updateBetsData.actionType = "update"
+    updatatesBetArray.push(updateBetsData)
+
   }
+
+  let insert = await DeleteBetsDataModel.insertMany(updatatesBetArray)
   
-   return SendResponse(
+  return SendResponse(
     res,
      "success",
     "",
     returnData
-   );
+  );
 }
-
 
 const deleteBetsDataPermanently = async (req,res)=>{
   const bodyData = req.body;
+  const loginData = req.loggedInUser
+  let clientIp = requestIp.getClientIp(req);
+
   if(bodyData && !bodyData.betsIdArray){
     return SendResponse(
       res,
@@ -691,7 +805,7 @@ const deleteBetsDataPermanently = async (req,res)=>{
 
       deleteBetsData.push({
         betType: "fancy",
-        data: fancyBetDetails,
+        oldData: fancyBetDetails,
       })
 
       userId = new ObjectId(fancyBetDetails.userId);
@@ -738,7 +852,7 @@ const deleteBetsDataPermanently = async (req,res)=>{
       
        deleteBetsData.push({
         betType: "casino",
-        data: casinoBetDetails,
+        oldData: casinoBetDetails,
       })
       
       const userId = new ObjectId(casinoBetDetails.userId);
@@ -782,6 +896,67 @@ const deleteBetsDataPermanently = async (req,res)=>{
    );
 }
 
+const getUpdateDeleteBetData = async (req, res) => {
+  try {
+    const bodyData = req.body;
+    const whereObj = {};
+
+    if (bodyData.betType) {
+      whereObj.betType = bodyData.betType
+    }
+
+   if (bodyData.username) {
+      whereObj["data.userInfo.clientCode"] = bodyData.username;
+   }
+    
+    
+  if (bodyData.fromDate && bodyData.toDate) {
+    whereObj.date = await dateWhereCond(bodyData.fromDate, bodyData.toDate);
+  }
+    
+    let returnData;
+    let totalCount = 0;
+
+    if (bodyData.pageNo && bodyData.pageSize) {
+      const pageNo = Math.max(1, parseInt(bodyData.pageNo, 10));
+      const pageSize = Math.max(1, parseInt(bodyData.pageSize, 10));
+      const skip = (pageNo - 1) * pageSize;
+
+      const [data, count] = await Promise.all([
+          DeleteBetsDataModel.find(whereObj)
+            .sort({ date: -1, _id: -1 })
+            .skip(skip)
+            .limit(pageSize)
+            .lean(),
+
+          DeleteBetsDataModel.countDocuments(whereObj),
+        ]);
+
+      returnData = data;
+      totalCount = count;
+
+
+
+      return SendResponse(res, "success", "", {
+        data: returnData,
+        totalCount,
+        pageNo,
+        pageSize,
+        totalPages: Math.ceil(totalCount / pageSize),
+      });
+    }
+
+    returnData = await DeleteBetsDataModel.find(whereObj)
+    .sort({ date: -1, _id: -1 })
+    .lean();
+
+    return SendResponse(res, "success", "", returnData);
+  } catch (error) {
+    console.error("getUpdateDeleteBetData error:", error);
+
+    return SendResponse(res, "error", "Something went wrong");
+  }
+};
 
 module.exports = {
   depositWithdrawTotal,
@@ -792,5 +967,6 @@ module.exports = {
   checkIpAddress,
   deleteTrackingActivities,
   updateBetsData,
-  deleteBetsDataPermanently
+  deleteBetsDataPermanently,
+  getUpdateDeleteBetData
 };

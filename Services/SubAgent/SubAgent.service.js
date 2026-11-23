@@ -2,20 +2,17 @@ const SubAgentModel = require("../../Models/SubAgent/SubAgent.model");
 const SubAgentRoleModel = require("../../Models/SubAgent/SubAgentRole.model");
 const DepositWithdrawModel = require("../../Models/BtoC/DepositWithdraw.model");
 const UserModel = require("../../Models/User/User.model");
-const AccountModel = require("../../Models/BtoC/Account.model");
 const PaymentAccountModel = require("../../Models/PaymentAccount.model");
 const DomainModel = require("../../Models/Domain.model");
 const SubAgentActivityModel = require("../../Models/SubAgent/SubAgentActivity.model");
 const CrickTransactionLogModel = require("../../Models/crickTransaction.model");
 const OddsBetsListModel = require("../../Models/BetsList/OddsBetsList.model");
-const speakeasy = require("speakeasy");
-const QRCode = require("qrcode");
 const Joi = require("joi");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { SendResponse } = require("../../Helpers/ResponseMapper");
-const { dateWhereCond ,   _dx,
+const { dateWhereCond, _dx,
   _d, } = require("../../Helpers/CommonHelper");
 const { UpdateUserCoins } = require("../../Helpers/TransactionHelper");
 const { getWebsiteDataByReq } = require("../../Helpers/CommonHelper");
@@ -25,41 +22,65 @@ const mongoose = require("mongoose");
 const ObjectId = mongoose.Types.ObjectId;
 
 // Pages available for subagent (agent-level relevant pages only)
+// group field matches sidebar sections for organized display
 const AVAILABLE_PAGES = [
-  // Main
-  { key: "dashboard", label: "Dashboard" },
+  // Dashboard
+  { key: "dashboard", label: "Dashboard", group: "Dashboard" },
   // Management
-  { key: "subagentManagement", label: "SubAgent Management" },
-  { key: "rolesPermissions", label: "Roles & Permissions" },
-  { key: "clientList", label: "Client List" },
-  { key: "clientCreate", label: "Create Client" },
+  { key: "subagentManagement", label: "SubAgent Management", group: "Management" },
+  { key: "rolesPermissions", label: "Roles & Permissions", group: "Management" },
+  { key: "clientList", label: "Client List", group: "Management" },
+  { key: "clientCreate", label: "Create Client", group: "Management" },
   // Finance
-  { key: "depositWithdraw", label: "Deposit & Withdraw" },
-  { key: "dwReport", label: "D&W Report" },
-  { key: "settlement", label: "Settlement" },
-  { key: "commission", label: "Commission Report" },
-  { key: "transactionLog", label: "Transaction Log" },
+  { key: "depositWithdraw", label: "Deposit & Withdraw", group: "Finance" },
+  { key: "dwReport", label: "D&W Report", group: "Finance" },
+  { key: "settlement", label: "Settlement", group: "Finance" },
+  { key: "commission", label: "Commission Report", group: "Finance" },
+  { key: "transactionLog", label: "Transaction Log", group: "Finance" },
   // Reports
-  { key: "dailyPL", label: "Daily P&L" },
-  { key: "betList", label: "Bet List" },
-  { key: "fancyReport", label: "Fancy Report" },
-  { key: "casinoReport", label: "Casino Report" },
-  { key: "accountReport", label: "Account Report" },
-  { key: "clientRetention", label: "Client Retention" },
+  { key: "dailyPL", label: "Daily P&L", group: "Reports" },
+  { key: "betList", label: "Bet List", group: "Reports" },
+  { key: "fancyReport", label: "Fancy Report", group: "Reports" },
+  { key: "casinoReport", label: "Casino Report", group: "Reports" },
+  { key: "accountReport", label: "Account Report", group: "Reports" },
+  { key: "clientRetention", label: "Client Retention", group: "Reports" },
+  // SubAgent Reports
+  { key: "subagentOverview", label: "Overview", group: "SubAgent Reports" },
+  { key: "subagentDWReport", label: "D&W Report", group: "SubAgent Reports" },
+  { key: "subagentClientReport", label: "Client Report", group: "SubAgent Reports" },
+  { key: "subagentCommissionReport", label: "Commission", group: "SubAgent Reports" },
+  { key: "subagentPerformance", label: "Performance", group: "SubAgent Reports" },
+  { key: "subagentClientLogin", label: "Client Logins", group: "SubAgent Reports" },
+  { key: "subagentDuplicateIP", label: "Duplicate IPs", group: "SubAgent Reports" },
+  { key: "subagentClientBalance", label: "Balance Report", group: "SubAgent Reports" },
+  { key: "subagentPaymentMethod", label: "Payment Methods", group: "SubAgent Reports" },
+  { key: "subagentUTRReport", label: "UTR Report", group: "SubAgent Reports" },
+  { key: "subagentSettlement", label: "Settlement", group: "SubAgent Reports" },
+  { key: "subagentClientGrowth", label: "Client Growth", group: "SubAgent Reports" },
+  { key: "subagentTurnover", label: "Turnover", group: "SubAgent Reports" },
+  { key: "subagentComparison", label: "Comparison", group: "SubAgent Reports" },
+  { key: "subagentReferralFunnel", label: "Referral Funnel", group: "SubAgent Reports" },
+  { key: "subagentHighExposure", label: "High Exposure", group: "SubAgent Reports" },
+  { key: "subagentAudit", label: "Audit Trail", group: "SubAgent Reports" },
+  // SubAgent Markets Reports - client-wise betting/market reports
+  { key: "subagentBettingReport", label: "Betting Report", group: "SubAgent Markets Reports" },
+  { key: "subagentPLReport", label: "P&L Report", group: "SubAgent Markets Reports" },
+  { key: "subagentCasinoReport", label: "Casino Report", group: "SubAgent Markets Reports" },
+  { key: "subagentFancyReport", label: "Fancy Report", group: "SubAgent Markets Reports" },
   // Accounts
-  { key: "accountDetails", label: "Payment Methods" },
-  { key: "domainSettings", label: "Domain Settings" },
+  { key: "accountDetails", label: "Payment Methods", group: "Accounts" },
+  { key: "domainSettings", label: "Domain Settings", group: "Accounts" },
   // Affiliate
-  { key: "commissionPlans", label: "Commission Plans" },
-  { key: "affiliateDashboard", label: "Affiliate Dashboard" },
-  { key: "myReferrals", label: "My Referrals" },
-  { key: "affiliateEarnings", label: "My Earnings" },
+  { key: "commissionPlans", label: "Commission Plans", group: "Affiliate" },
+  { key: "affiliateDashboard", label: "Affiliate Dashboard", group: "Affiliate" },
+  { key: "myReferrals", label: "My Referrals", group: "Affiliate" },
+  { key: "affiliateEarnings", label: "My Earnings", group: "Affiliate" },
   // Tools
-  { key: "ipManagement", label: "IP Management" },
-  { key: "notifications", label: "Notifications" },
-  { key: "activityLog", label: "Activity Log" },
-  { key: "settings", label: "Settings" },
-  { key: "changePassword", label: "Change Password" },
+  { key: "ipManagement", label: "IP Management", group: "Tools" },
+  { key: "notifications", label: "Notifications", group: "Tools" },
+  { key: "activityLog", label: "Activity Log", group: "Tools" },
+  { key: "settings", label: "Settings", group: "Tools" },
+  { key: "changePassword", label: "Change Password", group: "Tools" },
 ];
 
 const AVAILABLE_ACTIONS = ["view", "create", "update", "delete"];
@@ -600,67 +621,133 @@ async function SeedDefaultRoles(req, res) {
     const loginUser = req.loggedInUser;
     if (!["agent", ...ABOVE_AGENT].includes(loginUser.userType)) return SendResponse(res, "error", "Not authorized");
 
+    const agentId = resolveAgentId(req);
+    if (!agentId) return SendResponse(res, "error", "No agent selected");
+
     // Delete all existing roles for this agent first
-    await SubAgentRoleModel.deleteMany({ agentId: loginUser.userId });
+    await SubAgentRoleModel.deleteMany({ agentId });
 
     const allPerms = {};
     AVAILABLE_PAGES.forEach(p => { allPerms[p.key] = [...AVAILABLE_ACTIONS]; });
 
     const defaults = [
       { name: "Super Admin", permissions: { ...allPerms } },
-      { name: "Manager", permissions: {
-        dashboard: ["view"], clientList: ["view", "update"], clientCreate: ["view", "create"],
-        depositWithdraw: ["view", "update"], dwReport: ["view"], settlement: ["view"],
-        commission: ["view"], transactionLog: ["view"], dailyPL: ["view"], betList: ["view"],
-        fancyReport: ["view"], casinoReport: ["view"], accountReport: ["view"], clientRetention: ["view"],
-        accountDetails: ["view", "update"], domainSettings: ["view", "update"],
-        ipManagement: ["view"], notifications: ["view", "create"], activityLog: ["view"], settings: ["view"],
-      }},
-      { name: "Finance Manager", permissions: {
-        dashboard: ["view"], depositWithdraw: ["view", "update"], dwReport: ["view"],
-        settlement: ["view"], commission: ["view"], transactionLog: ["view"],
-        dailyPL: ["view"], accountReport: ["view"], accountDetails: ["view", "update"],
-        clientList: ["view"],
-      }},
-      { name: "Deposit Handler", permissions: {
-        dashboard: ["view"], depositWithdraw: ["view", "update"], dwReport: ["view"],
-        clientList: ["view"], transactionLog: ["view"], accountDetails: ["view"],
-      }},
-      { name: "Withdraw Handler", permissions: {
-        dashboard: ["view"], depositWithdraw: ["view", "update"], dwReport: ["view"],
-        clientList: ["view"], transactionLog: ["view"], accountDetails: ["view"],
-      }},
-      { name: "Client Support", permissions: {
-        dashboard: ["view"], clientList: ["view", "update"], clientCreate: ["view", "create"],
-        depositWithdraw: ["view"], settlement: ["view"], notifications: ["view", "create"],
-        changePassword: ["view", "update"],
-      }},
-      { name: "Report Viewer", permissions: {
-        dashboard: ["view"], dwReport: ["view"], dailyPL: ["view"], betList: ["view"],
-        fancyReport: ["view"], casinoReport: ["view"], accountReport: ["view"],
-        clientRetention: ["view"], commission: ["view"], transactionLog: ["view"],
-        settlement: ["view"], clientList: ["view"],
-      }},
-      { name: "Account Manager", permissions: {
-        dashboard: ["view"], accountDetails: ["view", "create", "update", "delete"],
-        accountReport: ["view"], domainSettings: ["view", "update"],
-      }},
-      { name: "Affiliate Manager", permissions: {
-        dashboard: ["view"], commissionPlans: ["view", "create", "update", "delete"],
-        affiliateDashboard: ["view"], myReferrals: ["view"], affiliateEarnings: ["view"],
-        clientList: ["view"],
-      }},
-      { name: "Viewer Only", permissions: {
-        dashboard: ["view"], clientList: ["view"], depositWithdraw: ["view"], dwReport: ["view"],
-        settlement: ["view"], commission: ["view"], transactionLog: ["view"],
-        dailyPL: ["view"], betList: ["view"], fancyReport: ["view"], casinoReport: ["view"],
-        accountReport: ["view"], clientRetention: ["view"], accountDetails: ["view"],
-        domainSettings: ["view"], activityLog: ["view"], settings: ["view"],
-      }},
+      {
+        name: "Manager", permissions: {
+          dashboard: ["view"], clientList: ["view", "update"], clientCreate: ["view", "create"],
+          depositWithdraw: ["view", "update"], dwReport: ["view"], settlement: ["view"],
+          commission: ["view"], transactionLog: ["view"], dailyPL: ["view"], betList: ["view"],
+          fancyReport: ["view"], casinoReport: ["view"], accountReport: ["view"], clientRetention: ["view"],
+          accountDetails: ["view", "update"], domainSettings: ["view", "update"],
+          ipManagement: ["view"], notifications: ["view", "create"], activityLog: ["view"], settings: ["view"],
+          subagentOverview: ["view"], subagentDWReport: ["view"], subagentClientReport: ["view"],
+          subagentCommissionReport: ["view"], subagentPerformance: ["view"],
+          subagentBettingReport: ["view"], subagentPLReport: ["view"], subagentCasinoReport: ["view"],
+          subagentFancyReport: ["view"], subagentClientLogin: ["view"], subagentDuplicateIP: ["view"],
+          subagentClientBalance: ["view"], subagentPaymentMethod: ["view"], subagentUTRReport: ["view"],
+          subagentSettlement: ["view"], subagentClientGrowth: ["view"], subagentTurnover: ["view"],
+          subagentComparison: ["view"], subagentReferralFunnel: ["view"], subagentHighExposure: ["view"],
+          subagentAudit: ["view"],
+        }
+      },
+      {
+        name: "Finance Manager", permissions: {
+          dashboard: ["view"], depositWithdraw: ["view", "update"], dwReport: ["view"],
+          settlement: ["view"], commission: ["view"], transactionLog: ["view"],
+          dailyPL: ["view"], accountReport: ["view"], accountDetails: ["view", "update"],
+          clientList: ["view"],
+          subagentDWReport: ["view"], subagentCommissionReport: ["view"], subagentPLReport: ["view"],
+          subagentSettlement: ["view"], subagentTurnover: ["view"], subagentPaymentMethod: ["view"],
+          subagentUTRReport: ["view"],
+        }
+      },
+      {
+        name: "Deposit Handler", permissions: {
+          dashboard: ["view"], depositWithdraw: ["view", "update"], dwReport: ["view"],
+          clientList: ["view"], transactionLog: ["view"], accountDetails: ["view"],
+          subagentDWReport: ["view"], subagentUTRReport: ["view"],
+        }
+      },
+      {
+        name: "Withdraw Handler", permissions: {
+          dashboard: ["view"], depositWithdraw: ["view", "update"], dwReport: ["view"],
+          clientList: ["view"], transactionLog: ["view"], accountDetails: ["view"],
+          subagentDWReport: ["view"], subagentUTRReport: ["view"],
+        }
+      },
+      {
+        name: "Client Support", permissions: {
+          dashboard: ["view"], clientList: ["view", "update"], clientCreate: ["view", "create"],
+          depositWithdraw: ["view"], settlement: ["view"], notifications: ["view", "create"],
+          changePassword: ["view", "update"],
+          subagentClientReport: ["view"], subagentClientLogin: ["view"], subagentDuplicateIP: ["view"],
+          subagentClientBalance: ["view"], subagentClientGrowth: ["view"],
+        }
+      },
+      {
+        name: "Report Viewer", permissions: {
+          dashboard: ["view"], dwReport: ["view"], dailyPL: ["view"], betList: ["view"],
+          fancyReport: ["view"], casinoReport: ["view"], accountReport: ["view"],
+          clientRetention: ["view"], commission: ["view"], transactionLog: ["view"],
+          settlement: ["view"], clientList: ["view"],
+          subagentOverview: ["view"], subagentDWReport: ["view"], subagentClientReport: ["view"],
+          subagentCommissionReport: ["view"], subagentPerformance: ["view"],
+          subagentBettingReport: ["view"], subagentPLReport: ["view"], subagentCasinoReport: ["view"],
+          subagentFancyReport: ["view"], subagentClientLogin: ["view"], subagentClientBalance: ["view"],
+          subagentPaymentMethod: ["view"], subagentUTRReport: ["view"], subagentSettlement: ["view"],
+          subagentClientGrowth: ["view"], subagentTurnover: ["view"], subagentComparison: ["view"],
+          subagentReferralFunnel: ["view"], subagentHighExposure: ["view"],
+        }
+      },
+      {
+        name: "Account Manager", permissions: {
+          dashboard: ["view"], accountDetails: ["view", "create", "update", "delete"],
+          accountReport: ["view"], domainSettings: ["view", "update"],
+          subagentPaymentMethod: ["view"], subagentUTRReport: ["view"],
+        }
+      },
+      {
+        name: "Affiliate Manager", permissions: {
+          dashboard: ["view"], commissionPlans: ["view", "create", "update", "delete"],
+          affiliateDashboard: ["view"], myReferrals: ["view"], affiliateEarnings: ["view"],
+          clientList: ["view"],
+          subagentReferralFunnel: ["view"], subagentCommissionReport: ["view"],
+        }
+      },
+      {
+        name: "SubAgent Marketing", permissions: {
+          subagentOverview: ["view"], subagentDWReport: ["view"], subagentClientReport: ["view"],
+          subagentCommissionReport: ["view"], subagentPerformance: ["view"],
+          subagentClientLogin: ["view"], subagentDuplicateIP: ["view"],
+          subagentClientBalance: ["view"], subagentPaymentMethod: ["view"], subagentUTRReport: ["view"],
+          subagentSettlement: ["view"], subagentClientGrowth: ["view"], subagentTurnover: ["view"],
+          subagentComparison: ["view"], subagentReferralFunnel: ["view"], subagentHighExposure: ["view"],
+          subagentAudit: ["view"],
+          subagentBettingReport: ["view"], subagentPLReport: ["view"], subagentCasinoReport: ["view"],
+          subagentFancyReport: ["view"],
+        }
+      },
+      {
+        name: "Viewer Only", permissions: {
+          dashboard: ["view"], clientList: ["view"], depositWithdraw: ["view"], dwReport: ["view"],
+          settlement: ["view"], commission: ["view"], transactionLog: ["view"],
+          dailyPL: ["view"], betList: ["view"], fancyReport: ["view"], casinoReport: ["view"],
+          accountReport: ["view"], clientRetention: ["view"], accountDetails: ["view"],
+          domainSettings: ["view"], activityLog: ["view"], settings: ["view"],
+          subagentOverview: ["view"], subagentDWReport: ["view"], subagentClientReport: ["view"],
+          subagentCommissionReport: ["view"], subagentPerformance: ["view"],
+          subagentBettingReport: ["view"], subagentPLReport: ["view"], subagentCasinoReport: ["view"],
+          subagentFancyReport: ["view"], subagentClientLogin: ["view"], subagentDuplicateIP: ["view"],
+          subagentClientBalance: ["view"], subagentPaymentMethod: ["view"], subagentUTRReport: ["view"],
+          subagentSettlement: ["view"], subagentClientGrowth: ["view"], subagentTurnover: ["view"],
+          subagentComparison: ["view"], subagentReferralFunnel: ["view"], subagentHighExposure: ["view"],
+          subagentAudit: ["view"],
+        }
+      },
     ];
 
     for (const role of defaults) {
-      await new SubAgentRoleModel({ name: role.name, permissions: role.permissions, agentId: loginUser.userId }).save();
+      await new SubAgentRoleModel({ name: role.name, permissions: role.permissions, agentId }).save();
     }
 
     return SendResponse(res, "success", `All old roles deleted. ${defaults.length} new roles created.`);
@@ -762,53 +849,53 @@ async function SeedClients(req, res) {
     // Real Indian usernames - how actual betting users pick usernames
     const usernameStyles = [
       // cricket fan style
-      (fn, ln, i) => `${fn.toLowerCase()}${Math.floor(Math.random()*99)}`,
+      (fn, ln, i) => `${fn.toLowerCase()}${Math.floor(Math.random() * 99)}`,
       (fn, ln, i) => `${fn.toLowerCase()}_${ln.toLowerCase()}`,
-      (fn, ln, i) => `${fn.toLowerCase()}${ln.toLowerCase().substring(0,3)}${Math.floor(Math.random()*999)}`,
-      (fn, ln, i) => `${fn.toLowerCase()}.${ln.toLowerCase()}${Math.floor(10+Math.random()*90)}`,
+      (fn, ln, i) => `${fn.toLowerCase()}${ln.toLowerCase().substring(0, 3)}${Math.floor(Math.random() * 999)}`,
+      (fn, ln, i) => `${fn.toLowerCase()}.${ln.toLowerCase()}${Math.floor(10 + Math.random() * 90)}`,
       // sport fans
-      (fn, ln, i) => `${fn.toLowerCase()}_king${Math.floor(Math.random()*99)}`,
-      (fn, ln, i) => `${fn.toLowerCase()}boss${Math.floor(100+Math.random()*900)}`,
-      (fn, ln, i) => `${fn.toLowerCase()}${["_bet","_play","_win","_pro","_ace","777","99","_x"][Math.floor(Math.random()*8)]}`,
+      (fn, ln, i) => `${fn.toLowerCase()}_king${Math.floor(Math.random() * 99)}`,
+      (fn, ln, i) => `${fn.toLowerCase()}boss${Math.floor(100 + Math.random() * 900)}`,
+      (fn, ln, i) => `${fn.toLowerCase()}${["_bet", "_play", "_win", "_pro", "_ace", "777", "99", "_x"][Math.floor(Math.random() * 8)]}`,
       // mobile number style
-      (fn, ln, i) => `${fn.toLowerCase()}${["6","7","8","9"][Math.floor(Math.random()*4)]}${Math.floor(1000+Math.random()*9000)}`,
+      (fn, ln, i) => `${fn.toLowerCase()}${["6", "7", "8", "9"][Math.floor(Math.random() * 4)]}${Math.floor(1000 + Math.random() * 9000)}`,
       // initials style
-      (fn, ln, i) => `${fn.substring(0,1).toLowerCase()}${ln.toLowerCase()}${Math.floor(1+Math.random()*999)}`,
+      (fn, ln, i) => `${fn.substring(0, 1).toLowerCase()}${ln.toLowerCase()}${Math.floor(1 + Math.random() * 999)}`,
       // birth year style
-      (fn, ln, i) => `${fn.toLowerCase()}${Math.floor(1985+Math.random()*15)}`,
+      (fn, ln, i) => `${fn.toLowerCase()}${Math.floor(1985 + Math.random() * 15)}`,
     ];
 
     const firstNames = [
-      "Aarav","Vivaan","Aditya","Vihaan","Arjun","Sai","Reyansh","Ayaan","Krishna","Ishaan",
-      "Shaurya","Atharva","Advait","Dhruv","Kabir","Ritvik","Aarush","Darsh","Viraj","Rudra",
-      "Ananya","Diya","Myra","Sara","Aanya","Aadhya","Isha","Riya","Priya","Neha",
-      "Rohit","Rahul","Amit","Suresh","Rajesh","Vikram","Deepak","Ankur","Gaurav","Nikhil",
-      "Pooja","Sneha","Anjali","Meera","Kavita","Sunita","Divya","Nisha","Komal","Pallavi",
-      "Manish","Sanjay","Ajay","Vijay","Rakesh","Pankaj","Lalit","Manoj","Arun","Tarun",
-      "Harsh","Pranav","Yash","Kunal","Dev","Karan","Sahil","Mohit","Rohan","Varun",
-      "Tanvi","Nikita","Shruti","Aditi","Swati","Megha","Radhika","Simran","Bhavna","Jyoti",
-      "Akash","Vishal","Sachin","Tushar","Chirag","Hemant","Jayesh","Nilesh","Paresh","Umesh",
-      "Zara","Kiara","Aisha","Fatima","Hina","Rukhsar","Nazia","Saba","Aliya","Mariam",
-      "Surya","Chandan","Ravi","Mohan","Sohan","Gopal","Hari","Shiv","Ram","Lakshman",
-      "Prachi","Varsha","Sonal","Heena","Rina","Manju","Suman","Lata","Geeta","Seema",
-      "Aryan","Ishan","Shivam","Abhi","Aman","Neeraj","Sunil","Dinesh","Mukesh","Ramesh",
-      "Tanya","Khushi","Aanchal","Mansi","Sakshi","Ritika","Payal","Chetna","Deepa","Shilpa",
-      "Zubin","Farhan","Imran","Irfan","Asif","Danish","Sameer","Tariq","Wasim","Salman",
-      "Naveen","Praveen","Santosh","Jitendra","Mahendra","Narendra","Bharat","Sumit","Puneet","Vinay",
-      "Raghav","Shivansh","Vedant","Ansh","Laksh","Arnav","Ayush","Parth","Kartik","Madhav",
-      "Kriti","Mahi","Navya","Pihu","Shanaya","Trisha","Vidya","Yamini","Zoya","Suhana",
+      "Aarav", "Vivaan", "Aditya", "Vihaan", "Arjun", "Sai", "Reyansh", "Ayaan", "Krishna", "Ishaan",
+      "Shaurya", "Atharva", "Advait", "Dhruv", "Kabir", "Ritvik", "Aarush", "Darsh", "Viraj", "Rudra",
+      "Ananya", "Diya", "Myra", "Sara", "Aanya", "Aadhya", "Isha", "Riya", "Priya", "Neha",
+      "Rohit", "Rahul", "Amit", "Suresh", "Rajesh", "Vikram", "Deepak", "Ankur", "Gaurav", "Nikhil",
+      "Pooja", "Sneha", "Anjali", "Meera", "Kavita", "Sunita", "Divya", "Nisha", "Komal", "Pallavi",
+      "Manish", "Sanjay", "Ajay", "Vijay", "Rakesh", "Pankaj", "Lalit", "Manoj", "Arun", "Tarun",
+      "Harsh", "Pranav", "Yash", "Kunal", "Dev", "Karan", "Sahil", "Mohit", "Rohan", "Varun",
+      "Tanvi", "Nikita", "Shruti", "Aditi", "Swati", "Megha", "Radhika", "Simran", "Bhavna", "Jyoti",
+      "Akash", "Vishal", "Sachin", "Tushar", "Chirag", "Hemant", "Jayesh", "Nilesh", "Paresh", "Umesh",
+      "Zara", "Kiara", "Aisha", "Fatima", "Hina", "Rukhsar", "Nazia", "Saba", "Aliya", "Mariam",
+      "Surya", "Chandan", "Ravi", "Mohan", "Sohan", "Gopal", "Hari", "Shiv", "Ram", "Lakshman",
+      "Prachi", "Varsha", "Sonal", "Heena", "Rina", "Manju", "Suman", "Lata", "Geeta", "Seema",
+      "Aryan", "Ishan", "Shivam", "Abhi", "Aman", "Neeraj", "Sunil", "Dinesh", "Mukesh", "Ramesh",
+      "Tanya", "Khushi", "Aanchal", "Mansi", "Sakshi", "Ritika", "Payal", "Chetna", "Deepa", "Shilpa",
+      "Zubin", "Farhan", "Imran", "Irfan", "Asif", "Danish", "Sameer", "Tariq", "Wasim", "Salman",
+      "Naveen", "Praveen", "Santosh", "Jitendra", "Mahendra", "Narendra", "Bharat", "Sumit", "Puneet", "Vinay",
+      "Raghav", "Shivansh", "Vedant", "Ansh", "Laksh", "Arnav", "Ayush", "Parth", "Kartik", "Madhav",
+      "Kriti", "Mahi", "Navya", "Pihu", "Shanaya", "Trisha", "Vidya", "Yamini", "Zoya", "Suhana",
     ];
 
     const lastNames = [
-      "Sharma","Verma","Gupta","Singh","Kumar","Patel","Shah","Mehta","Joshi","Yadav",
-      "Chauhan","Thakur","Mishra","Pandey","Dubey","Tiwari","Srivastava","Agarwal","Jain","Bansal",
-      "Reddy","Rao","Nair","Menon","Iyer","Pillai","Varma","Bhat","Shetty","Hegde",
-      "Das","Ghosh","Bose","Sen","Mukherjee","Chatterjee","Banerjee","Roy","Sarkar","Dutta",
-      "Malhotra","Kapoor","Khanna","Chopra","Arora","Bedi","Dhawan","Grewal","Oberoi","Sethi",
-      "Saxena","Mathur","Rastogi","Goel","Mittal","Singhal","Bhatt","Trivedi","Dave","Desai",
-      "Patil","Kulkarni","Deshpande","Jog","Pawar","Jadhav","More","Gaikwad","Shinde","Sawant",
-      "Chowdhury","Mazumdar","Mitra","Bhattacharya","Saha","Pal","Mondal","Halder","Nandi","Basu",
-      "Rathore","Solanki","Rajput","Parmar","Bhati","Sisodia","Shekhawat","Deora","Tanwar","Gehlot",
+      "Sharma", "Verma", "Gupta", "Singh", "Kumar", "Patel", "Shah", "Mehta", "Joshi", "Yadav",
+      "Chauhan", "Thakur", "Mishra", "Pandey", "Dubey", "Tiwari", "Srivastava", "Agarwal", "Jain", "Bansal",
+      "Reddy", "Rao", "Nair", "Menon", "Iyer", "Pillai", "Varma", "Bhat", "Shetty", "Hegde",
+      "Das", "Ghosh", "Bose", "Sen", "Mukherjee", "Chatterjee", "Banerjee", "Roy", "Sarkar", "Dutta",
+      "Malhotra", "Kapoor", "Khanna", "Chopra", "Arora", "Bedi", "Dhawan", "Grewal", "Oberoi", "Sethi",
+      "Saxena", "Mathur", "Rastogi", "Goel", "Mittal", "Singhal", "Bhatt", "Trivedi", "Dave", "Desai",
+      "Patil", "Kulkarni", "Deshpande", "Jog", "Pawar", "Jadhav", "More", "Gaikwad", "Shinde", "Sawant",
+      "Chowdhury", "Mazumdar", "Mitra", "Bhattacharya", "Saha", "Pal", "Mondal", "Halder", "Nandi", "Basu",
+      "Rathore", "Solanki", "Rajput", "Parmar", "Bhati", "Sisodia", "Shekhawat", "Deora", "Tanwar", "Gehlot",
     ];
 
     // Cities with weighted distribution (metros get more clients)
@@ -820,9 +907,9 @@ async function SeedClients(req, res) {
       ...Array(3).fill("Thane"), ...Array(2).fill("Surat"), ...Array(2).fill("Indore"),
       ...Array(2).fill("Chandigarh"), ...Array(2).fill("Patna"), ...Array(2).fill("Nagpur"),
       ...Array(2).fill("Bhopal"), ...Array(2).fill("Ghaziabad"),
-      "Kanpur","Vadodara","Ludhiana","Agra","Nashik","Faridabad","Meerut","Rajkot","Varanasi",
-      "Aurangabad","Dhanbad","Amritsar","Jodhpur","Ranchi","Raipur","Coimbatore","Visakhapatnam",
-      "Mysore","Guwahati","Dehradun","Udaipur","Kochi","Mangalore","Bhubaneswar","Trichy",
+      "Kanpur", "Vadodara", "Ludhiana", "Agra", "Nashik", "Faridabad", "Meerut", "Rajkot", "Varanasi",
+      "Aurangabad", "Dhanbad", "Amritsar", "Jodhpur", "Ranchi", "Raipur", "Coimbatore", "Visakhapatnam",
+      "Mysore", "Guwahati", "Dehradun", "Udaipur", "Kochi", "Mangalore", "Bhubaneswar", "Trichy",
     ];
 
     // Realistic Indian ISP IP ranges
@@ -845,10 +932,10 @@ async function SeedClients(req, res) {
 
     // Realistic passwords that Indian users actually set
     const passwords = [
-      "India@123","Pass@1234","Hello@123","Kumar@123","Rohit@123","Test@1234",
-      "Cricket@7","Admin@123","Abc@12345","Qwerty@1","Lucky@777","Boss@1234",
-      "Virat@18","Dhoni@07","King@1234","Star@2024","Bet@12345","Win@99999",
-      "Play@2025","Sachin@10","Power@123","Delhi@123","Mumbai@99","Royal@777",
+      "India@123", "Pass@1234", "Hello@123", "Kumar@123", "Rohit@123", "Test@1234",
+      "Cricket@7", "Admin@123", "Abc@12345", "Qwerty@1", "Lucky@777", "Boss@1234",
+      "Virat@18", "Dhoni@07", "King@1234", "Star@2024", "Bet@12345", "Win@99999",
+      "Play@2025", "Sachin@10", "Power@123", "Delhi@123", "Mumbai@99", "Royal@777",
     ];
 
     const now = Date.now();
@@ -897,12 +984,12 @@ async function SeedClients(req, res) {
       usedUsernames.add(username);
 
       // Indian mobile (realistic Jio/Airtel prefixes)
-      const mobilePrefixes = ["6350","6367","6375","6392","7014","7023","7042","7065","7206","7300",
-        "7355","7428","7500","7568","7620","7698","7737","7791","7838","7880",
-        "8003","8058","8107","8168","8219","8279","8318","8368","8433","8505",
-        "8587","8630","8700","8756","8800","8851","8920","8989","9015","9050",
-        "9118","9166","9205","9256","9311","9350","9412","9456","9501","9555",
-        "9610","9649","9680","9718","9760","9810","9868","9899","9910","9958"];
+      const mobilePrefixes = ["6350", "6367", "6375", "6392", "7014", "7023", "7042", "7065", "7206", "7300",
+        "7355", "7428", "7500", "7568", "7620", "7698", "7737", "7791", "7838", "7880",
+        "8003", "8058", "8107", "8168", "8219", "8279", "8318", "8368", "8433", "8505",
+        "8587", "8630", "8700", "8756", "8800", "8851", "8920", "8989", "9015", "9050",
+        "9118", "9166", "9205", "9256", "9311", "9350", "9412", "9456", "9501", "9555",
+        "9610", "9649", "9680", "9718", "9760", "9810", "9868", "9899", "9910", "9958"];
       const mob = mobilePrefixes[Math.floor(Math.random() * mobilePrefixes.length)] + String(Math.floor(100000 + Math.random() * 900000));
 
       // Password
@@ -910,7 +997,7 @@ async function SeedClients(req, res) {
 
       // IP from realistic ISP
       const isp = ispRanges[Math.floor(Math.random() * ispRanges.length)];
-      const lastIp = `${isp.prefix}.${Math.floor(Math.random()*255)}.${Math.floor(1+Math.random()*254)}`;
+      const lastIp = `${isp.prefix}.${Math.floor(Math.random() * 255)}.${Math.floor(1 + Math.random() * 254)}`;
 
       // ---- Segment-based realistic values ----
       let coins, creditReference, exposure, totalProfitLoss, status, betStatus, casinoStatus, matkaStatus;
@@ -931,7 +1018,7 @@ async function SeedClients(req, res) {
           userMatchCommission = 2; userSessionCommission = 2; userCasinoCommission = 3;
           userMatchShare = Math.floor(70 + Math.random() * 25); // 70-95%
           userCasinoShare = Math.floor(60 + Math.random() * 30);
-          notes = ["VIP Client","Premium Player","High Roller","Top Client"][Math.floor(Math.random()*4)];
+          notes = ["VIP Client", "Premium Player", "High Roller", "Top Client"][Math.floor(Math.random() * 4)];
           break;
 
         case "regular": // Active daily players
@@ -942,7 +1029,7 @@ async function SeedClients(req, res) {
           status = 1; betStatus = true; casinoStatus = Math.random() > 0.15; matkaStatus = Math.random() > 0.5;
           createdAt = new Date(now - Math.floor((30 + Math.random() * 300) * DAY));
           lastLoginTime = new Date(now - Math.floor(Math.random() * 3 * DAY)); // last 3 days
-          userCommissionType = ["BetByBet","OnlyOnMinus"][Math.floor(Math.random()*2)];
+          userCommissionType = ["BetByBet", "OnlyOnMinus"][Math.floor(Math.random() * 2)];
           userMatchCommission = Math.floor(1 + Math.random() * 2); userSessionCommission = 1; userCasinoCommission = Math.floor(1 + Math.random() * 3);
           userMatchShare = Math.floor(50 + Math.random() * 40);
           userCasinoShare = Math.floor(40 + Math.random() * 40);
@@ -957,7 +1044,7 @@ async function SeedClients(req, res) {
           status = 1; betStatus = true; casinoStatus = Math.random() > 0.3; matkaStatus = Math.random() > 0.6;
           createdAt = new Date(now - Math.floor((14 + Math.random() * 350) * DAY));
           lastLoginTime = new Date(now - Math.floor((1 + Math.random() * 14) * DAY)); // last 2 weeks
-          userCommissionType = ["NoCommission","BetByBet"][Math.floor(Math.random()*2)];
+          userCommissionType = ["NoCommission", "BetByBet"][Math.floor(Math.random() * 2)];
           userMatchCommission = Math.floor(Math.random() * 2); userSessionCommission = 0; userCasinoCommission = Math.floor(Math.random() * 2);
           userMatchShare = Math.floor(30 + Math.random() * 50);
           userCasinoShare = Math.floor(20 + Math.random() * 50);
@@ -1289,9 +1376,9 @@ async function ApproveRejectRequest(req, res) {
     if (!reqData) {
       return SendResponse(res, "error", "Request not found");
     }
-    if (reqData.status !== "pending") {
-      return SendResponse(res, "error", "Request already processed");
-    }
+    // if (reqData.status !== "pending") {
+    //   return SendResponse(res, "error", "Request already processed");
+    // }
 
     // Approver details - use subagent's name but mark it
     const approverName = loginUser.userType === "subagent"
@@ -1315,8 +1402,12 @@ async function ApproveRejectRequest(req, res) {
       if (bodyData.status === "accept") {
         const parentData = await UserModel.find({ userId: reqData.creatorId });
         const coins = reqData.amount;
-        await UpdateUserCoins(coins, reqData.userId, parentData, "user deposit approved");
 
+        _d(coins , "coins")
+       let rrr =  await UpdateUserCoins(coins, reqData.userId, parentData, "user deposit approved");
+
+        _d(rrr, "rrr")
+        
         // Check deposit bonus
         try {
           const websiteSettting = await getWebsiteDataByReq(req);
@@ -1420,6 +1511,7 @@ async function ClientList(req, res) {
     if (!["agent", "subagent", ...ABOVE_AGENT].includes(loginUser.userType)) {
       return SendResponse(res, "error", "Not authorized");
     }
+    let loginUserType = loginUser.userType;
 
     const agentId = resolveAgentId(req);
     const bodyData = req.body;
@@ -1488,6 +1580,13 @@ async function ClientList(req, res) {
     const page = bodyData.pageNo || 1;
     const size = bodyData.size || 50;
     const skip = (page - 1) * size;
+
+
+    if (loginUserType === "subagent") {
+      whereObj[`subagentId`] = new ObjectId(loginUser.userId);
+    }
+
+    ///_d(whereObj , "")
 
     const [clients, totalCount] = await Promise.all([
       UserModel.find(whereObj, specific).sort(sortObj).skip(skip).limit(size).lean(),
@@ -1909,7 +2008,7 @@ async function UpdateDomain(req, res) {
       isDeleted: false,
     });
 
-    
+
     if (!domain) {
       return SendResponse(res, "error", "Domain not found");
     }
@@ -1945,20 +2044,19 @@ async function UpdateDomain(req, res) {
       return SendResponse(res, "error", "No valid fields to update");
     }
 
-  
-    
+
     await DomainModel.updateOne({ _id: domain._id }, { $set: updateData });
     const updated = await DomainModel.findById(domain._id).lean();
     await client.set(updated.domainUrl, JSON.stringify(updated));
-       
-      try {
-        await client.hset(updated.domainUrl, Object.entries({
-          domainData: JSON.stringify(updated),
-        }).flat());
-         _d(updated, "updated")
-       
-      } catch (e) { /* Redis update optional */ }
-    
+
+    try {
+      await client.hset(updated.domainUrl, Object.entries({
+        domainData: JSON.stringify(updated),
+      }).flat());
+    //  _d(updated, "updated")
+
+    } catch (e) { /* Redis update optional */ }
+
 
     const updatedDomain = await DomainModel.findById(domain._id).lean();
     if (loginUser.userType === "subagent") {
@@ -2476,9 +2574,10 @@ async function DashboardStats(req, res) {
 
       // D/W trend - for subagent show only what they processed
       DepositWithdrawModel.aggregate([
-        { $match: isSubAgent
-          ? { ...agentFilter, approveUserId: subAgentObjId, createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } }
-          : { ...agentFilter, createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } }
+        {
+          $match: isSubAgent
+            ? { ...agentFilter, approveUserId: subAgentObjId, createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } }
+            : { ...agentFilter, createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } }
         },
         {
           $group: {
@@ -2493,29 +2592,29 @@ async function DashboardStats(req, res) {
       // SubAgent performance - for subagent show only own, for agent show all
       isSubAgent
         ? SubAgentActivityModel.aggregate([
-            { $match: { ...agentFilter, subAgentId: subAgentObjId, createdAt: { $gte: todayStart, $lte: todayEnd } } },
-            {
-              $group: {
-                _id: "$category",
-                count: { $sum: 1 },
-                approved: { $sum: { $cond: [{ $in: ["$action", ["deposit_approve", "withdraw_approve"]] }, 1, 0] } },
-                rejected: { $sum: { $cond: [{ $in: ["$action", ["deposit_reject", "withdraw_reject"]] }, 1, 0] } },
-              },
+          { $match: { ...agentFilter, subAgentId: subAgentObjId, createdAt: { $gte: todayStart, $lte: todayEnd } } },
+          {
+            $group: {
+              _id: "$category",
+              count: { $sum: 1 },
+              approved: { $sum: { $cond: [{ $in: ["$action", ["deposit_approve", "withdraw_approve"]] }, 1, 0] } },
+              rejected: { $sum: { $cond: [{ $in: ["$action", ["deposit_reject", "withdraw_reject"]] }, 1, 0] } },
             },
-          ])
+          },
+        ])
         : SubAgentActivityModel.aggregate([
-            { $match: { ...agentFilter, category: "deposit_withdraw", createdAt: { $gte: todayStart, $lte: todayEnd } } },
-            {
-              $group: {
-                _id: { subAgentId: "$subAgentId", subAgentName: "$subAgentName" },
-                approved: { $sum: { $cond: [{ $in: ["$action", ["deposit_approve", "withdraw_approve"]] }, 1, 0] } },
-                rejected: { $sum: { $cond: [{ $in: ["$action", ["deposit_reject", "withdraw_reject"]] }, 1, 0] } },
-                totalActions: { $sum: 1 },
-              },
+          { $match: { ...agentFilter, category: "deposit_withdraw", createdAt: { $gte: todayStart, $lte: todayEnd } } },
+          {
+            $group: {
+              _id: { subAgentId: "$subAgentId", subAgentName: "$subAgentName" },
+              approved: { $sum: { $cond: [{ $in: ["$action", ["deposit_approve", "withdraw_approve"]] }, 1, 0] } },
+              rejected: { $sum: { $cond: [{ $in: ["$action", ["deposit_reject", "withdraw_reject"]] }, 1, 0] } },
+              totalActions: { $sum: 1 },
             },
-            { $sort: { totalActions: -1 } },
-            { $limit: 10 },
-          ]),
+          },
+          { $sort: { totalActions: -1 } },
+          { $limit: 10 },
+        ]),
 
       UserModel.find({ ...agentFilter, userType: "client", isDeleted: false, exposure: { $lt: -5000 } })
         .select("name username exposure coins").sort({ exposure: 1 }).limit(5).lean(),
@@ -2528,9 +2627,9 @@ async function DashboardStats(req, res) {
       // My processed D/W today (subagent only)
       isSubAgent
         ? DepositWithdrawModel.aggregate([
-            { $match: { ...agentFilter, approveUserId: subAgentObjId, createdAt: { $gte: todayStart, $lte: todayEnd }, status: { $in: ["accept", "cancel"] } } },
-            { $group: { _id: "$status", count: { $sum: 1 }, total: { $sum: "$amount" } } },
-          ])
+          { $match: { ...agentFilter, approveUserId: subAgentObjId, createdAt: { $gte: todayStart, $lte: todayEnd }, status: { $in: ["accept", "cancel"] } } },
+          { $group: { _id: "$status", count: { $sum: 1 }, total: { $sum: "$amount" } } },
+        ])
         : Promise.resolve([]),
     ]);
 
@@ -2628,7 +2727,7 @@ async function GetClientPaymentAccounts(req, res) {
       return SendResponse(res, "error", "No agent assigned to this client");
     }
 
-   
+
 
     // Build query - only active accounts for this agent
     let whereObj = {
@@ -2644,8 +2743,8 @@ async function GetClientPaymentAccounts(req, res) {
       .sort({ priority: 1, createdAt: -1 })
       .lean();
 
-    
-     _d(allAccounts , "allAccounts")
+
+    // _d(allAccounts, "allAccounts")
     // Now filter by conditions
     const now = new Date();
     const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
@@ -2719,7 +2818,7 @@ async function ForceLogoutSubAgent(req, res) {
     const sa = await SubAgentModel.findOne({ _id: new ObjectId(subAgentId), agentId: new ObjectId(loginUser.userId), isDeleted: false });
     if (!sa) return SendResponse(res, "error", "SubAgent not found");
     await SubAgentModel.updateOne({ _id: sa._id }, { jwtToken: "", authenticateToken: null });
-    try { await client.del(String(sa._id)); } catch (e) {}
+    try { await client.del(String(sa._id)); } catch (e) { }
     setImmediate(() => logActivity({
       subAgentId: loginUser.userId, subAgentName: loginUser.name, subAgentUsername: loginUser.username,
       agentId: loginUser.userId, action: "force_logout", category: "auth",
@@ -2857,14 +2956,16 @@ async function ClientDWHistory(req, res) {
         .sort({ createdAt: -1 }).limit(100).lean(),
       DepositWithdrawModel.aggregate([
         { $match: { userId: new ObjectId(clientId), agentId: new ObjectId(agentId) } },
-        { $group: {
-          _id: null,
-          totalDeposit: { $sum: { $cond: [{ $and: [{ $eq: ["$reqType", "deposit"] }, { $eq: ["$status", "accept"] }] }, "$amount", 0] } },
-          totalWithdraw: { $sum: { $cond: [{ $and: [{ $eq: ["$reqType", "withdraw"] }, { $eq: ["$status", "accept"] }] }, "$amount", 0] } },
-          pendingDeposit: { $sum: { $cond: [{ $and: [{ $eq: ["$reqType", "deposit"] }, { $eq: ["$status", "pending"] }] }, "$amount", 0] } },
-          pendingWithdraw: { $sum: { $cond: [{ $and: [{ $eq: ["$reqType", "withdraw"] }, { $eq: ["$status", "pending"] }] }, "$amount", 0] } },
-          totalCount: { $sum: 1 },
-        }},
+        {
+          $group: {
+            _id: null,
+            totalDeposit: { $sum: { $cond: [{ $and: [{ $eq: ["$reqType", "deposit"] }, { $eq: ["$status", "accept"] }] }, "$amount", 0] } },
+            totalWithdraw: { $sum: { $cond: [{ $and: [{ $eq: ["$reqType", "withdraw"] }, { $eq: ["$status", "accept"] }] }, "$amount", 0] } },
+            pendingDeposit: { $sum: { $cond: [{ $and: [{ $eq: ["$reqType", "deposit"] }, { $eq: ["$status", "pending"] }] }, "$amount", 0] } },
+            pendingWithdraw: { $sum: { $cond: [{ $and: [{ $eq: ["$reqType", "withdraw"] }, { $eq: ["$status", "pending"] }] }, "$amount", 0] } },
+            totalCount: { $sum: 1 },
+          }
+        },
       ]),
     ]);
 
@@ -2884,11 +2985,13 @@ async function ClientProfitLoss(req, res) {
 
     const pl = await CrickTransactionLogModel.aggregate([
       { $match: { clientId: new ObjectId(clientId), agentId: new ObjectId(agentId), transactionType: "profitLoss" } },
-      { $group: {
-        _id: "$gameType",
-        totalPL: { $sum: "$clientProfitLoss" },
-        count: { $sum: 1 },
-      }},
+      {
+        $group: {
+          _id: "$gameType",
+          totalPL: { $sum: "$clientProfitLoss" },
+          count: { $sum: 1 },
+        }
+      },
       { $sort: { totalPL: 1 } },
     ]);
 

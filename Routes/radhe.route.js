@@ -9,8 +9,6 @@ router.post(
   radheService.radheDashboard
 );
 
-
-
 router.post(
   "/sportWiseFilterData",
   verifyToken,
@@ -28,8 +26,5 @@ router.post(
   verifyToken,
   radheService.dashboardProfitLoss
 );
-
-
-
 
 module.exports = router;

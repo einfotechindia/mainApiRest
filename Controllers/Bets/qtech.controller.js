@@ -8,7 +8,7 @@ const {
   updateCoinsTbl,
 } = require("../../Helpers/TransactionHelper");
 const { client } = require("../../Helpers/RedisHelper");
-const { _dx, _d, whereHelper } = require("../../Helpers/CommonHelper");
+const { _dx, _d } = require("../../Helpers/CommonHelper");
 const { siteSetting } = require("../../Common/Constants");
 const Joi = require("joi");
 const ShareModel = require("../../Models/User/Share.model");

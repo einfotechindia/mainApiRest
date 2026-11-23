@@ -155,6 +155,10 @@ const DomainSchema = new mongoose.Schema(
     seoMeta: {},
     contentPages: {},
     popupSetting: {},
+    codeSetting: {},
+    tvSetting: {},
+    scoreSetting: {},
+    
   },
   {
     timestamps: true,

@@ -19,7 +19,6 @@ const profitLossPosition = require("../../Models/BetsList/profitLossPosition.mod
 var requestIp = require("request-ip");
 const Joi = require("joi");
 const DiamondCasinoService = require("../../Services/DiamondCasino/DiamondCasino.service");
-const DiamondCasinoResultService = require("./diamondResult.Controller.js");
 const { siteSetting, UserTypes , fetchUrl } = require("../../Common/Constants");
 const diamondCasinoList = require("../../Models/Casino/DiamondCasinoList.model");
 const {
@@ -38,9 +37,9 @@ const {
   dateWhereCond,
   _date,
   gameBetValidaterRedis,
-  sleep
+  sleep,
+  getUserSportsSetting
 } = require("../../Helpers/CommonHelper");
-const { emitToUser } =  require("../../socket.js")
 
 const axios = require("axios");
 const CrickTransactionLogModel = require("../../Models/crickTransaction.model.js");
@@ -158,11 +157,13 @@ const casinoBetPlace = async (req, res) => {
   }
 
   
-  let [setRedisKeyForBet, timerCheck , casinoData] = await Promise.all([
+  let [setRedisKeyForBet, timerCheck , casinoData , sportsSetting] = await Promise.all([
     gameBetValidaterRedis(userId),
     checkLastBetTiming(loginData.userId, 5),
-    DiamondCasinoService.checkCasinoData(bodyData)
+    DiamondCasinoService.checkCasinoData(bodyData),
+    getUserSportsSetting(userId)
   ])
+
 
   if(!setRedisKeyForBet){
     return SendResponse(res, "error", `Please wait for a moment before placing another bet`);
@@ -176,15 +177,35 @@ const casinoBetPlace = async (req, res) => {
     return SendResponse(res, "error", casinoData.message);
   }
 
-
   casinoData = casinoData.data;
-
   const betAmount = bodyData.amount;
   let casinoType = bodyData.casinoType;
+  let betDelay = casinoData?.betDelay ? casinoData?.betDelay : 0 
+  if (betDelay && betDelay != 0) {
+    await sleep(betDelay * 1000);
+  }
+   
+  if (
+    Array.isArray(sportsSetting?.diamondCasinoBlock) &&
+    sportsSetting.diamondCasinoBlock.length > 0
+  ) {
+    const diamondCasinoBlock = sportsSetting.diamondCasinoBlock;
+
+    const isCasinoBlocked = diamondCasinoBlock.some(
+      (casino) => String(casino) === String(casinoData.eventId)
+    );
+
+    if (isCasinoBlocked) {
+      return SendResponse(
+        res,
+        "error",
+        "This casino game is blocked"
+      );
+    }
+  }
 
 
   let betFor = "odds";
-
   if (bodyData.betFor && bodyData.betFor != undefined) {
     betFor = bodyData?.betFor;
   }
@@ -200,6 +221,8 @@ const casinoBetPlace = async (req, res) => {
     let isVirtual = casinoData.isVirtual ? casinoData.isVirtual : false
     let casinoAPIData = {}
 
+   //_d(casinoData.cacheURL , "casinoData.cacheURL")
+
     if (!isVirtual) {
       casinoAPIData = await axios.get(casinoData.cacheURL);
     } else {
@@ -207,7 +230,6 @@ const casinoBetPlace = async (req, res) => {
         casinoType : casinoData.shortName
       });
     }
-
 
     if (casinoAPIData.data && !isVirtual) {
       let casinoLiveData = casinoAPIData.data;
@@ -354,6 +376,11 @@ const casinoBetPlace = async (req, res) => {
       }
     );
 
+
+    if (previousCasinoBets && previousCasinoBets.length > 0 && casinoType == "joker120") {
+      return SendResponse(res, "error", `only one bet is allowed in joker120`);
+    }
+
     var clientIp = requestIp.getClientIp(req);
     let insertBet = {
       userId: userId,
@@ -371,6 +398,7 @@ const casinoBetPlace = async (req, res) => {
       loss: loss.toFixed(2),
       betFor: betFor,
       isVirtual: isVirtual,
+      jokerCard : bodyData?.jokerCard ? bodyData?.jokerCard : ""
     };
 
     let posArray  = {}
@@ -566,8 +594,12 @@ const diamondBetsList = async (req, res) => {
       where.userId = new ObjectId(usernameData.userDetails.userId);
     }
 
-    where = await whereHelper(loggedInData, where);
 
+    if (loggedInData.userType != "staff") {
+      where = await whereHelper(loggedInData, where);
+    }
+    
+    
     if (bodyData.downlineUserId && bodyData.downlineUserType) {
       where = await whereHelper(
         {

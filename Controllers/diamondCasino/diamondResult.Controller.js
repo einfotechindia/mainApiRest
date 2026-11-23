@@ -19,7 +19,7 @@ const {
   SendResponse,
 } = require("../../Helpers/ResponseMapper");
 const { client } = require("../../Helpers/RedisHelper");
-const { casinoFetchUrl, siteSetting } = require("../../Common/Constants");
+const { casinoFetchUrl } = require("../../Common/Constants");
 const ShareModel = require("../../Models/User/Share.model");
 const TransactionLogModel = require("../../Models/TransactionLog.model");
 const StatementModel = require("../../Models/Statement.model");
@@ -235,20 +235,19 @@ const showResultConvert = async (resultData, casinoType) => {
     returnResult = values.join("||");
   }
 
-  if (resultData.gtype == "ballbyball" || resultData.gtype == "queen"  || resultData.gtype == "poker") {
+  if (resultData.gtype == "ballbyball" || resultData.gtype == "queen"  || resultData.gtype == "poker" || resultData.gtype == "race20" || resultData.gtype == "btable") {
     returnResult = resultData.desc;
   }
 
 
   const ename = resultData?.ename?.trim().toUpperCase();
   if (
-    ["GOAL 2", "GOAL", "MOGAMBO", "LUCKY 6", "UNLIMITED JOKER 20-20"].includes(ename)
+    ["GOAL 2", "GOAL", "MOGAMBO", "LUCKY 6", "UNLIMITED JOKER 20-20" , "BOLLYWOOD CASINO 2"].includes(ename)
   ) {
     returnResult = resultData.rdesc;
   }
 
 
-  //_dx(returnResult)
   return returnResult;
 };
 
@@ -289,8 +288,15 @@ const fetchRoundWiseResultAndSave = async (
     
 
         if (marketData) {
+
+        //  _d(marketData , "marketData")
          
           const showResult = await showResultConvert(marketData);
+
+
+
+
+
 
           const updateObj = {
             resultDetails: marketData,
@@ -300,6 +306,8 @@ const fetchRoundWiseResultAndSave = async (
           };
 
 
+         // _d(updateObj, "showResult")
+          
           await casinoBetModel.updateMany(
             {
               roundId: roundId,
@@ -736,7 +744,7 @@ const betsResultOfClient = async (req, res) => {
             eventName: `${logData.casinoType}-(${_date()})`,
           };
           directShareData.map((directShare) => {
-            crickPushTransactionLogComm[`${directShare.creatorUserType}LedgerAmount`] = directShare[`${directShare.creatorUserType}LedgerCasinoComm`] * crickInsertAmount / 100
+            crickPushTransactionLogComm[`${directShare.creatorUserType}LedgerAmount`] = -1 * directShare[`${directShare.creatorUserType}LedgerCasinoComm`] * crickInsertAmount / 100
             crickPushTransactionLogComm[`${directShare.creatorUserType}ProfitLoss`] = directShare[`${directShare.creatorUserType}ProfitLossCasinoComm`] * crickInsertAmount / 100
           })
           crickTransactionArray.push(crickPushTransactionLogComm);
@@ -831,7 +839,8 @@ async function selectionResult(betData) {
       betData.eventId == 3061 ||
       betData.eventId == 3037 ||
       betData.eventId == 3051 ||
-      betData.eventId == 3065
+      betData.eventId == 3065 ||
+      betData.eventId == 3036
     ) {
 
       if (betData.casinoType == "poker") {
@@ -864,7 +873,8 @@ async function selectionResult(betData) {
       betData.casinoType == "goal" ||
       betData.casinoType == "mogambo" ||
       betData.casinoType == "lucky5" ||
-      betData.casinoType == "joker120" 
+      betData.casinoType == "joker120" ||
+      betData.casinoType == "btable2" 
     ) {
       returnAmount = betData.loss;
       let marketWiseData = betData.resultDetails;
@@ -872,9 +882,19 @@ async function selectionResult(betData) {
       const desc = marketWiseData.rdesc;
       let splitResult = desc.split("#").map((value) => value.trim());
       splitResult = splitResult.map(item => item.toUpperCase());
-      if (splitResult.includes(nat)) {
-        returnAmount = betData.profit;
-      }
+
+        if (splitResult.includes(nat) && betData.betType == "L") {
+                returnAmount = betData.profit;
+              } else if (!splitResult.includes(nat) && betData.betType == "L") {
+                returnAmount = betData.loss;
+              } else if (splitResult.includes(nat) && betData.betType == "K") {
+                returnAmount = betData.loss;
+              } else if (!splitResult.includes(nat) && betData.betType == "K") {
+                returnAmount = betData.profit;
+              } else {
+                returnAmount = 0;
+        }
+      
     }
 
     if (betData.casinoType == "lucky7eu") {
@@ -1124,6 +1144,28 @@ async function selectionResult(betData) {
           returnAmount = betData.profit;
         }
       }
+    }
+
+    if (betData.casinoType == "btable") {
+        returnAmount = betData.loss;
+        let marketWiseData = betData.resultDetails;
+      let nat = (betData.playerName).toUpperCase();
+      nat = nat.replace(/\s+[A-Z]-[A-Z]$/, "").trim();
+        const desc = marketWiseData.desc;
+        let splitResult = desc.split("|").map((value) => value.trim());
+      splitResult = splitResult.map(item => item.toUpperCase());
+      
+          if (splitResult.includes(nat) && betData.betType == "L") {
+                returnAmount = betData.profit;
+              } else if (!splitResult.includes(nat) && betData.betType == "L") {
+                returnAmount = betData.loss;
+              } else if (splitResult.includes(nat) && betData.betType == "K") {
+                returnAmount = betData.loss;
+              } else if (!splitResult.includes(nat) && betData.betType == "K") {
+                returnAmount = betData.profit;
+              } else {
+                returnAmount = 0;
+          }
     }
 
   } else {

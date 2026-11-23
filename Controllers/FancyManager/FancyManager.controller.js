@@ -66,11 +66,19 @@ module.exports = {
     }
   },
 
-  RunSeed: async (req, res) => {
+    RunSeed: async (req, res) => {
+      try {
+        await FancyManagerService.RunSeed(req, res);
+      } catch (err) {
+        return SendResponse(res, "error", err.message || "Something went wrong");
+      }
+    },
+
+  getFancyConfigData: async (req, res) => {
     try {
-      await FancyManagerService.RunSeed(req, res);
+      await FancyManagerService.getFancyConfigData(req, res);
     } catch (err) {
       return SendResponse(res, "error", err.message || "Something went wrong");
     }
-  },
+  }
 };

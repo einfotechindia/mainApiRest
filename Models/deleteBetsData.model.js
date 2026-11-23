@@ -7,11 +7,20 @@ const deleteBetsDataSchema = new mongoose.Schema(
     betType: {
       type: String,
     },
-    data: {},
+    oldData: {},
     isRollback: {
         type: Boolean,
         default: false,
-    }
+    },
+    actionType : {
+      type: String,
+      default : null
+    },
+    userInfo: {},
+    ip:{
+      type: String,
+    },
+    updateData:{}
   },
   {
     timestamps: true,

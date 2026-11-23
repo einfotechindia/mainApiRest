@@ -1,12 +1,15 @@
 const CryptoJS = require("crypto-js");
 const decruptData = async (req, res, next) => {
   try {
+    if(req.path == "/v1/website/fileUpload" || req.path == "/v1/website/fileUploadToS3" || req.path.includes("/v1/cp")) {
+      if (next) return next();
+      return req.body;
+    }
     if (
       (req.body &&  req.body.data && req.body.isEncruption) || process.env.IS_RECEIVED_DATA_ENCRUPTION == "true"
     ) {
       let returnStatus = false
       let encruptedData = req?.body?.data;
-
       if (!encruptedData) {
         returnStatus = true
         if (res) {
@@ -33,13 +36,13 @@ const decruptData = async (req, res, next) => {
           returnStatus = true
         }
         const inputTime = new Date(req?.body?.timestamp);
+
         const now = new Date();
         const diffInSeconds = Math.floor((now - inputTime) / 1000);
 
-        if (diffInSeconds > 30) {
-           returnStatus = true
+        if (diffInSeconds > 3) {
+           //returnStatus = true
         }
-          console.log(JSON.stringify(req.body), "req.bodyddd")
 
         if (res && returnStatus) {
             return res.status(400).json({
@@ -48,10 +51,7 @@ const decruptData = async (req, res, next) => {
               code : 0
             });
         }
-        
-     
-        
-        req.body.returnStatus = returnStatus
+        delete req.body.timestamp
       } else {
         req.body = { returnStatus: true }
         

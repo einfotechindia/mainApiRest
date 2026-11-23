@@ -54,6 +54,13 @@ const UserModel = require("../../Models/User/User.model");
 const { getUserIdByUsername } = require("../../Helpers/UsersUtils");
 axios.defaults.timeout = siteSetting.axiosTimeOut;
 
+const checkMaximumProfit = async (userId, marketId, newPosMaxAmount) => { 
+  const userBets = await BetModel.find({ userId, marketId });
+  const totalProfit = userBets.reduce((acc, bet) => acc + bet.profit, 0);
+  return totalProfit + newPosMaxAmount <= siteSetting.maxProfitLimit;
+}
+
+
 const oddBetPlaced = async (req, res) => {
   let betLockKey;
   let lockToken;
@@ -85,7 +92,7 @@ const oddBetPlaced = async (req, res) => {
     // ==========================================
     const JoiSchema = Joi.object({
       marketId: Joi.string().trim().required(),
-      amount: Joi.number().integer().positive().min(1).required(),
+      amount: Joi.number().positive().min(1).required(),
       selectionId: Joi.number().required(),
       odds: Joi.number().positive().required(),
       run: Joi.number().required(),
@@ -133,7 +140,11 @@ const oddBetPlaced = async (req, res) => {
       }
     }
 
+
+
+    bodyData.userId = new ObjectId(loggedUserData.userId);
     const checkOdds = await BetService.checkLiveMatchOdds(bodyData, userRate);
+
     if (checkOdds.status == "error") {
       return SendResponse(res, "error", checkOdds.message);
     }
@@ -213,9 +224,7 @@ const oddBetPlaced = async (req, res) => {
         createdAt: 1,
       }
     );
-    if (oldMatchBet) {
-      // .lean() already returns plain objects — no mongoToJson needed
-    }
+
     let teamData = [];
 
     if (oddsType == "toss") {
@@ -412,6 +421,17 @@ const oddBetPlaced = async (req, res) => {
     if (checkAmount > check) {
       return SendResponse(res, "error", msg("bet.invalidAmount"));
     }
+
+    let maximumProfitAllowed = matchData.maxProfitBookmaker ? matchData.maxProfitBookmaker : 0;
+    if (oddsType == "odds") {
+        maximumProfitAllowed = matchData.maxProfitBookmaker ? matchData.maxProfitBookmaker : 0;
+    }
+
+    if (maximumProfitAllowed > 0 && newPosMaxAmount > maximumProfitAllowed) {
+      return SendResponse(res, "error", msg("bet.maximumProfitExceeded" , { market: oddsType , maxProfit: maximumProfitAllowed  , amount: newPosMinAmount }));
+    }
+
+
 
     const logData = {
       amount: deductAmount,
@@ -655,7 +675,7 @@ const sessionBetPlaced = async (req, res) => {
     let bodyData = req.body;
     const JoiSchema = Joi.object({
       odds: Joi.number().positive().required(),
-      amount: Joi.number().integer().positive().min(1).required(),
+      amount: Joi.number().positive().min(1).required(),
       marketId: Joi.string().trim().required(),
       selectionId: Joi.required(),
       run: Joi.number().required(),
@@ -714,6 +734,7 @@ const sessionBetPlaced = async (req, res) => {
     }
 
     const marketId = bodyData.marketId;
+    bodyData.userId = new ObjectId(loggedUserData.userId);
 
     // ============================================================
     // PARALLEL: timerCheck + blockedMarket + liveOdds — all independent
@@ -761,31 +782,43 @@ const sessionBetPlaced = async (req, res) => {
     // ============================================================
     // PARALLEL: checkUserData + checkPlayData — independent
     // ============================================================
-    let [checkUserData, checkPlayData] = await Promise.all([
-      BetService.checkUserData(userId, bodyData),
-      BetService.checkPlayDataMarketWise({ _id: userId, userId: userId }, marketId, "fancy"),
-    ]);
+  
 
-    if (checkUserData.status == "error") {
-      return SendResponse(res, "error", checkUserData.message);
-    }
-    const userData = checkUserData.data;
+    let checkUserData = await BetService.checkUserData(userId, bodyData);
+    
+        if (checkUserData.status == "error") {
+          return SendResponse(res, "error", checkUserData.message);
+        }
+        const userData = checkUserData.data;
+        if (!userData.betStatus) {
+          return SendResponse(
+            res,
+            "error",
+            "your bet is locked please contact your agent"
+          );
+        }
+    
+
+    let checkPlayData = {}
+    let shareData = {};
     let directUserShareData = {};
 
-    if (!userData.betStatus) {
-      return SendResponse(res, "error", msg("bet.betLocked"));
-    }
+    checkPlayData = await BetService.checkPlayDataMarketWise(
+      userData,
+      marketId,
+      "fancy"
+    );
+  
 
-    // Re-fetch playData with full userData if first call used minimal data
-    if (!checkPlayData || !checkPlayData.shareData) {
-      checkPlayData = await BetService.checkPlayDataMarketWise(userData, marketId, "fancy");
+    if (checkPlayData.shareData) {
+      shareData = JSON.parse(checkPlayData.shareData);
     }
 
     if (checkPlayData?.directUserShareData) {
-      directUserShareData = checkPlayData?.directUserShareData;
+      directUserShareData = checkPlayData?.directUserShareData
     }
 
-    const shareData = checkPlayData.shareData ? JSON.parse(checkPlayData.shareData) : {};
+
 
     // ============================================================
     // PARALLEL: old session bets — fetch while we already have userData
@@ -884,6 +917,7 @@ const sessionBetPlaced = async (req, res) => {
     }
 
     let newPositionAmount = 0;
+    let maximumProfitPosition = 0
     oldSessionBetData.push(insertFancyBet);
 
     if (oldSessionBetData.length == 1) {
@@ -899,11 +933,10 @@ const sessionBetPlaced = async (req, res) => {
       );
       const values = Object.values(newBetsPosition);
       newPositionAmount = Math.min(...values);
+      maximumProfitPosition = Math.max(...values);
     }
 
-    // ============================================================
-    // PARALLEL: oldPosition + realCoins — both are DB aggregations, independent
-    // ============================================================
+
     const [oldPositionAmount, realUserCoins] = await Promise.all([
       getSessionPositionByTransaction(userData, selectionId, marketId),
       getUserCoinsByTransactionTable(userData._id),
@@ -918,7 +951,6 @@ const sessionBetPlaced = async (req, res) => {
       return SendResponse(res, "error", msg("bet.invalidFancyAmount"));
     }
 
-    
     let endTime = Date.now();
     let executionTime = endTime - startTime; // Calculate the execution time in milliseconds
 
@@ -926,6 +958,12 @@ const sessionBetPlaced = async (req, res) => {
       return SendResponse(res, "error", msg("bet.executionTimeout"));
     }
 
+
+    let maximumProfitAllowed = matchData.maxProfitFancy ? matchData.maxProfitFancy : 0;
+    
+    if (maximumProfitAllowed > 0 && maximumProfitPosition > maximumProfitAllowed) {
+      return SendResponse(res, "error", msg("bet.maximumProfitExceeded" , { market: "fancy" , maxProfit: maximumProfitAllowed  , amount: newPositionAmount }));
+    }
 
     const logData = {
       amount:
@@ -1334,7 +1372,7 @@ const betsList = async (req, res) => {
 
       const oddsListPromise = BetService.getOddsBetList(
         whereObj,
-        "userId , amount , selectionId ,  odds , type , profit , loss , teamName , userInfo , ip , date , createdAt , oddsType , isDeleted , isDeclare , positionInfo , decisionSelectionId , wonTeamName , marketId , eventId , matchName , betfairMarketId , matchName",
+        "userId , amount , selectionId ,  odds , type , profit , loss , teamName , userInfo , ip , date , createdAt , oddsType , isDeleted , isDeclare , positionInfo , decisionSelectionId , wonTeamName , marketId , eventId , matchName , betfairMarketId , matchName , decisionSelectionIdArray",
         bodyData
       );
 
@@ -1497,6 +1535,7 @@ const betsList = async (req, res) => {
             odds: value.odds,
             userInfo: value.userInfo,
             marketType: "odds",
+            decisionSelectionIdArray : value.decisionSelectionIdArray
           });
         });
       }
@@ -2914,6 +2953,7 @@ const combinedBetPlaceOdds = async (req, res) => {
     let amount = bodyData.amount;
 
     let userRate = userRateRedis ? userRateRedis : 0;
+    bodyData.userId = new ObjectId(loggedUserData.userId);
     let checkOdds = await BetService.checkLiveMatchOdds(bodyData, userRate, true);
     let matchData = checkOdds.matchData;
     let settingData = checkOdds.settingData;
@@ -3474,6 +3514,8 @@ const updateBetfairMarket = async (req, res) => {
   
   return SendResponse(res, returnData.status, returnData.message , returnData);
 };
+
+
 
 module.exports = {
   oddBetPlaced,

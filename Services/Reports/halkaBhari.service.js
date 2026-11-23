@@ -1,6 +1,5 @@
 const UserModel = require("../../Models/User/User.model");
 const { ObjectId } = require("mongodb");
-const profitLossPosition = require("../../Models/BetsList/profitLossPosition.model");
 const fancyBetListModel = require("../../Models/BetsList/FancyBetsList.model");
 const oddsBetListModel = require("../../Models/BetsList/OddsBetsList.model");
 const crickTransaction = require("../../Models/crickTransaction.model");
@@ -1252,20 +1251,31 @@ const halkaBhariSettlement = async (req, res) => {
     let bodyData = req.body
     const loginData = req.loggedInUser;
     let userId = bodyData.userId
-    let isCash = true
-   
+    let Userpriority = UserTypes.indexOf(loginData.userType);
+    let downlineUserType = UserTypes[Userpriority - 1];
+    let isDirect = false
+    let isDepositWithdraw = false
+    if (bodyData.isDirect && bodyData.isDirect == true) {
+      isDirect = true
+    }
+
     let userWhere = await whereHelper(loginData, {
       userId: new ObjectId(userId),
       status: 1,
       isDeleted: false,
+      isDeleted: 0,
     })
+
+    if (!isDirect) {
+      userWhere.userType  = downlineUserType
+    }
 
     let userData = await UserModel.findOne(
       userWhere
     );
 
-    if (!userData) {
-      return SendResponse(res, "error", "user Not Found");
+    if (!userData && !bodyData.isBsf) {
+      return SendResponse(res, "error", "you are not authorised to settle this user");
     }
 
     if (!userData.status) {
@@ -1327,35 +1337,19 @@ const halkaBhariSettlement = async (req, res) => {
       userDepositWithdrawType = `settlment withdraw from  ${userData.username}`;
       userStatementStatus = "settlement withdraw";
      }
+  
+    let receivedPaid =  updateCoins < 0 ? "Received From" : "Paid To"
+    let userCrickRemark = `${bodyData?.remark ? bodyData?.remark + "- " : ""} ${userData.username} (${userData.name}) Cash ${receivedPaid}   ${loginData.username}} (${_date_time()})]`;
+    
+  
+      if (updateCoins > 0) {
+        userCrickRemark = `${bodyData?.remark ? bodyData?.remark + "- " : ""} ${loginData.username} Cash Received From ${userData.username} (${userData.name}) [${_date_time()}]`;
+      } else {
+        userCrickRemark = `${bodyData?.remark ? bodyData?.remark + "- " : ""} ${loginData.username} Cash Paid To ${userData.username} (${userData.name}) [${_date_time()}]`;
+      }
     
     
-      let receivedPaid =  updateCoins < 0 ? "received" : "paid"
-
-       let userCrickRemark = `${bodyData?.remark ? bodyData?.remark + "- " : ""} ${userData.username} (${userData.name}) Cash ${receivedPaid} from  ${loginData.username}} (${_date_time()})]`;
-    
-      let userCrickTransactionLog = {
-        amount: userData.userType == "client" ? updateCoins :  coins ,
-        transactionType: "ledger",
-        remarks: userCrickRemark,
-        userId: userData.userId,
-        userType: userData.userType,
-        ownerId: userData.ownerId,
-        subownerId: userData.subownerId,
-        superadminId: userData.superadminId,
-        adminId: userData.adminId,
-        subadminId: userData.subadminId,
-        masterId: userData.masterId,
-        superagentId: userData.superagentId,
-        agentId: userData.agentId,
-        clientId: userData.clientId,
-        creatorId: userData.creatorId,
-        [`${userData.userType}ProfitLoss`]: updateCoins,
-        [`${userData.userType}LedgerAmount`]: updateCoins,
-        isCash: true
-      };
-    
-    
-    let eventName = `Cash Liya Done By  ${loginData.username} (${loginData.name}) To ${userData.username} (${userData.name})`;
+     let eventName = `Cash Liya Done By  ${loginData.username} (${loginData.name}) To ${userData.username} (${userData.name})`;
     if (
       (userData.userType == "client" && bodyData.amount < 0) ||
       (userData.userType != "client" && bodyData.amount > 0)
@@ -1364,20 +1358,54 @@ const halkaBhariSettlement = async (req, res) => {
     }
 
 
+    
+      let userCrickTransactionLog = {
+          amount: userData.userType == "client" ? updateCoins :  coins ,
+          transactionType: "ledger",
+          remarks: userCrickRemark,
+          userId: userData.userId,
+          userType: userData.userType,
+          ownerId: userData.ownerId,
+          subownerId: userData.subownerId,
+          superadminId: userData.superadminId,
+          adminId: userData.adminId,
+          subadminId: userData.subadminId,
+          masterId: userData.masterId,
+          superagentId: userData.superagentId,
+          agentId: userData.agentId,
+          clientId: userData.clientId,
+          creatorId: userData.creatorId,
+          [`${userData.userType}ProfitLoss`]: updateCoins,
+          [`${userData.userType}LedgerAmount`]: updateCoins,
+          isCash: true,
+          eventName : `${eventName} - ${_date_time()}`
+      };
+    
+
+    
+   
+
+
+    let crickInsert = await crickTransaction.create(userCrickTransactionLog);
+
+
+    _d(bodyData , "bodyData")
+    _d(updateCoins , "updateCoins")
+    _d(coins , "coins")
+       
     let userLedgerObj = {
       userId: userData.userId,
       userType: userData.userType,
       ledgerType: "settle",
       remark: bodyData.remark ? bodyData.remark : "",
-      amount: coins,
-      eventName : eventName
+      amount: updateCoins,
+      eventName: eventName,
+      crickTransactionId : crickInsert._id
     }
     userLedgerObj = await parentDataAppend(userData, userLedgerObj);
 
-     await Promise.all([
-       crickTransaction.create(userCrickTransactionLog),
-       LedgerModel.create(userLedgerObj)
-     ])
+    let ledgerInsert  = await LedgerModel.create(userLedgerObj)
+    
   
     return SendResponse(res, "success", "sellement Updated Successfully Done");
 
@@ -1829,8 +1857,8 @@ const halkaBhariAccountStatement = async (req, res) => {
 
 
 
-    _d(where , "ddd")
-    _d(group , "group")
+    // _d(where , "ddd")
+    // _d(group , "group")
 
     let resData = await crickTransaction.aggregate([
       {

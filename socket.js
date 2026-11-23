@@ -35,7 +35,7 @@ const REDIS_PORT = parseInt(process.env.REDIS_PORT, 10) || 6379;
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
 
 // ─── Tuning Constants ─────────────────────────────────────────
-const MAX_SOCKETS_PER_USER = 5;            // Max concurrent connections per user
+const MAX_SOCKETS_PER_USER = 50;            // Max concurrent connections per user
 const RATE_LIMIT_WINDOW_MS = 1000;         // 1 second window
 const RATE_LIMIT_MAX_EVENTS = 20;          // Max events per window per socket
 const STAFF_HEARTBEAT_DEBOUNCE_MS = 10000; // Debounce staff Redis writes to 10s
@@ -249,6 +249,18 @@ function registerEventHandlers() {
       socket.join(`sports:${String(userId)}`);
     });
 
+    // ── Join Sports Room ──
+    // socket.on("JoinRoom", ({ marketId } = {}) => {
+    //   //if (!userId || !checkRateLimit(socket)) return;
+    //   socket.join(marketId);
+    // });
+
+
+    socket.on("JoinRoom", (marketId) => {
+      socket.join(marketId);
+    });
+
+
     // ── Logout ──
     socket.on("logout", async (payloadUserId) => {
       const userId = String(payloadUserId || socket.userId);
@@ -270,6 +282,9 @@ function registerEventHandlers() {
         await removeOnlineUser(userId);
       }
     });
+
+
+
   });
 }
 

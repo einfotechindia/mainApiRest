@@ -67,10 +67,35 @@ const PAGES_DATA = [
   { key: "settings_exposureUpdate", label: "Exposure Update", group: "Settings - Danger", sortOrder: 65 },
   { key: "settings_passwordReset", label: "Password Reset", group: "Settings - Danger", sortOrder: 66 },
 
+  // ─── SubAgent Reports ───
+  { key: "subagentOverview", label: "SubAgent Overview", group: "SubAgent Reports", sortOrder: 80 },
+  { key: "subagentDWReport", label: "SubAgent D&W Report", group: "SubAgent Reports", sortOrder: 81 },
+  { key: "subagentClientReport", label: "SubAgent Client Report", group: "SubAgent Reports", sortOrder: 82 },
+  { key: "subagentCommissionReport", label: "SubAgent Commission", group: "SubAgent Reports", sortOrder: 83 },
+  { key: "subagentPerformance", label: "SubAgent Performance", group: "SubAgent Reports", sortOrder: 84 },
+  { key: "subagentClientLogin", label: "Client Login Report", group: "SubAgent Reports", sortOrder: 85 },
+  { key: "subagentDuplicateIP", label: "Duplicate IP Detection", group: "SubAgent Reports", sortOrder: 86 },
+  { key: "subagentClientBalance", label: "Client Balance Report", group: "SubAgent Reports", sortOrder: 87 },
+  { key: "subagentPaymentMethod", label: "Payment Method Report", group: "SubAgent Reports", sortOrder: 88 },
+  { key: "subagentUTRReport", label: "UTR/Transaction Report", group: "SubAgent Reports", sortOrder: 89 },
+  { key: "subagentSettlement", label: "Settlement Report", group: "SubAgent Reports", sortOrder: 90 },
+  { key: "subagentClientGrowth", label: "Client Growth Report", group: "SubAgent Reports", sortOrder: 91 },
+  { key: "subagentTurnover", label: "Turnover Report", group: "SubAgent Reports", sortOrder: 92 },
+  { key: "subagentComparison", label: "SubAgent Comparison", group: "SubAgent Reports", sortOrder: 93 },
+  { key: "subagentReferralFunnel", label: "Referral Funnel", group: "SubAgent Reports", sortOrder: 94 },
+  { key: "subagentHighExposure", label: "High Exposure Clients", group: "SubAgent Reports", sortOrder: 95 },
+  { key: "subagentAudit", label: "SubAgent Audit Trail", group: "SubAgent Reports", sortOrder: 96 },
+
+  // ─── SubAgent Markets Reports (client-wise betting/market reports) ───
+  { key: "subagentBettingReport", label: "Betting Report", group: "SubAgent Markets Reports", sortOrder: 100 },
+  { key: "subagentPLReport", label: "P&L Report", group: "SubAgent Markets Reports", sortOrder: 101 },
+  { key: "subagentCasinoReport", label: "Casino Report", group: "SubAgent Markets Reports", sortOrder: 102 },
+  { key: "subagentFancyReport", label: "Fancy Report", group: "SubAgent Markets Reports", sortOrder: 103 },
+
   // ─── Admin ───
-  { key: "staffManagement", label: "Staff Management", group: "Admin", sortOrder: 90 },
-  { key: "rolesPermissions", label: "Roles & Permissions", group: "Admin", sortOrder: 91 },
-  { key: "staffActivity", label: "Staff Activity Log", group: "Admin", sortOrder: 92 },
+  { key: "staffManagement", label: "Staff Management", group: "Admin", sortOrder: 110 },
+  { key: "rolesPermissions", label: "Roles & Permissions", group: "Admin", sortOrder: 111 },
+  { key: "staffActivity", label: "Staff Activity Log", group: "Admin", sortOrder: 112 },
 ];
 
 async function seedAvailablePages() {

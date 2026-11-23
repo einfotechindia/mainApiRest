@@ -4,8 +4,6 @@ const UserModel = require("../Models/User/User.model");
 const { SendResponse } = require("../Helpers/ResponseMapper");
 const { siteSetting } = require("../Common/Constants");
 const { client } = require("../Helpers/RedisHelper");
-var requestIp = require("request-ip");
-
 // Middleware that allows both agent (from UserModel) and subagent (from SubAgentModel)
 async function verifySubAgentToken(req, res, next) {
   const token = req.headers.authorization?.split(" ")[1];

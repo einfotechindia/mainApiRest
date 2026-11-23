@@ -4,27 +4,10 @@ const UserModel = require("../Models/User/User.model");
 const ShareModel = require("../Models/User/Share.model");
 const transactionModel = require("../Models/TransactionLog.model");
 const crickTransactionModel = require("../Models/crickTransaction.model");
-const statementModel = require("../Models/Statement.model");
-const CoinsModel = require("../Models/User/Coins.model");
-const activityModel = require("../Models/Activity.model");
-const BetModel = require("../Models/BetsList/OddsBetsList.model");
-const CasinoBetModel = require("../Models/BetsList/CasinoBetsList.model");
-const FancyModel = require("../Models/BetsList/FancyBetsList.model");
-const PlayModel = require("../Models/Play.model");
-const DomainModel = require("../Models/Domain.model");
 const AccountCoinsModel = require("../Models/User/AccountCoins.model");
-const ledgerModel = require("../Models/Ledger.model");
-const sportsModel = require("../Models/sportList.model");
-const sportsMarketModel = require("../Models/sportsMarketList.model");
-const loginActivities = require("../Models/LoginActivity.model");
-const oddsPosition = require("../Models/BetsList/OddsPosition.model");
-const profitLossPos = require("../Models/BetsList/profitLossPosition.model");
-const InternationalCasinoBetList = require("../Models/BetsList/InternationalCasinoBetsList.model");
-const internationalCasinoList = require("../Models/internationalCasinoList.model");
 const sportsConfig = require("../Models/User/UserSportsConfig.model");
 const SportsSetting = require("../Models/Sports/SportsSetting.model");
 const SettingModel = require("../Models/Setting.model");
-const directShareModel = require("../Models/User/directUserShareModel");
 const diamondCasinoList = require("../Models/Casino/DiamondCasinoList.model");
 const UserInternationExpoLimitModel = require("../Models/User/UserInternationalExpoLimit.model");
 const websiteController = require("../Controllers/Bets/Website.controller");
@@ -162,35 +145,6 @@ userCreate = async () => {
   };
 
   try {
-    // await sportsModel.deleteMany();
-    // await sportsMarketModel.deleteMany();
-    // await UserModel.deleteMany();
-    // await ShareModel.deleteMany();
-    // await activityModel.deleteMany();
-    // await statementModel.deleteMany();
-    // await transactionModel.deleteMany();
-    // await CoinsModel.deleteMany();
-    // await PlayModel.deleteMany();
-    // await BetModel.deleteMany();
-    // await FancyModel.deleteMany();
-    // await ShareModel.deleteMany();
-    // await AccountCoinsModel.deleteMany();
-    // await DomainModel.deleteMany();
-    // await CasinoBetModel.deleteMany();
-    // await ledgerModel.deleteMany();
-    // await loginActivities.deleteMany();
-    // await oddsPosition.deleteMany();
-    // await profitLossPos.deleteMany();
-    // await InternationalCasinoBetList.deleteMany();
-    // await DomainModel.insertMany(DomainObject);
-    // await sportsConfig.deleteMany();
-    // await SportsSetting.deleteMany();
-    // await UserInternationExpoLimitModel.deleteMany();
-    // await crickTransactionModel.deleteMany();
-    // await directShareModel.deleteMany();
-    
-    
-
     let setting = {};
     await SettingModel.create(setting);
 

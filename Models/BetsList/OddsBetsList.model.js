@@ -39,6 +39,7 @@ const OddsBetsListSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    decisionSelectionIdArray: [],
     wonTeamName: {
       type: String,
       default: null,

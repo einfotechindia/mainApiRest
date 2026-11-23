@@ -3,7 +3,7 @@ const {
   returnResponse,
 } = require("../../Helpers/ResponseMapper");
 const { client } = require("../../Helpers/RedisHelper");
-const { getUserIdByUsername , createShareDataByUserId , userParentDetails} = require("../../Helpers/UsersUtils");
+const { getUserIdByUsername , gettingDirectUserByUserId } = require("../../Helpers/UsersUtils");
 const { ObjectId } = require("mongodb");
 const Joi = require("joi");
 const { siteSetting, bonusArray } = require("../../Common/Constants");
@@ -23,7 +23,8 @@ const {
   convertKeyObject,
   chunkArrayNew,
   _date,
-  getSettingData
+  getSettingData,
+  getClientShareArray,
 } = require("../../Helpers/CommonHelper");
 const isRedis = siteSetting.IS_REDIS;
 const multer = require("multer");
@@ -39,7 +40,6 @@ const sportResultModel = require("../../Models/sportsResult.model");
 const StatementModel = require("../../Models/Statement.model");
 const internationalCasinoList = require("../../Models/internationalCasinoList.model");
 const PlayModel = require("../../Models/Play.model")
-const profitLossModel = require("../../Models/BetsList/profitLossPosition.model")
 const fancyBetListModel = require("../../Models/BetsList/FancyBetsList.model")
 const shareModel = require("../../Models/User/Share.model")
 const DepositWithdrawModel = require("../../Models/BtoC/DepositWithdraw.model");
@@ -52,9 +52,11 @@ const accountTypeModel = require("../../Models/AccountType.model.js");
 const crickTransaction = require("../../Models/crickTransaction.model");
 const oddsBetsModel = require("../../Models/BetsList/OddsBetsList.model");
 const SubAgentModel = require("../../Models/SubAgent/SubAgent.model");
+const directUserShareModel = require("../../Models/User/directUserShareModel");
+const InternationalCasinoBetsModel = require("../../Models/BetsList/InternationalCasinoBetsList.model");
 const { checkWithdrawlAmount } = require("../../Services/Daman/daman.service");
-const casinoListJson = require("../../casinoList");
 var requestIp = require("request-ip");
+
 
 const moment = require("moment-timezone");
 moment.tz.setDefault("Asia/Kolkata");
@@ -74,7 +76,11 @@ const {
   updateCoinsTbl,
   updateBulkCoinsExposureUserByMarketId,
   wholeTransactionMarketData,
+  GetUserCoins,
+  getUserCoinsByTransactionTable
 } = require("../../Helpers/TransactionHelper");
+
+
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const s3Client = new S3Client({
   credentials: {
@@ -85,8 +91,6 @@ const s3Client = new S3Client({
 });
 
 const axios = require("axios");
-const { TRUE } = require("../../utils/constants");
-const { TransactGetItemsCommand } = require("@aws-sdk/client-dynamodb");
 const ShareModel = require("../../Models/User/Share.model");
 const { parsePhoneNumberFromString } = require("libphonenumber-js");
 
@@ -162,7 +166,7 @@ const updateDomain = async (req, res) => {
   const loggedUserData = req.loggedInUser;
   const userId = loggedUserData.userId;
   const userType = loggedUserData.userType;
-  if (userType == "owner" || userType == "subowner") {
+  if (userType == "owner" || userType == "subowner" || userType == "staff") {
     let updateWhere = {};
     if (userType == "subowner") {
       let domainDataBySubownerId = await DomainModel.findOne({
@@ -180,6 +184,7 @@ const updateDomain = async (req, res) => {
     }
     let updateData = bodyData;
     delete updateData.domainId
+    
     let update = await DomainModel.updateOne(updateWhere, {
       $set: updateData,
     });
@@ -192,10 +197,7 @@ const updateDomain = async (req, res) => {
       isCall : true,
     })
 
-    // await updateDomainBySocket(req, {
-    //   isDomainSettingUpdate: true,
-    // });
-
+   
     return SendResponse(res, "success", `Domain Updated Successfully`);
   } else {
     return SendResponse(
@@ -2297,6 +2299,7 @@ const getTransactionData = async (req, res) => {
     where.forBet = bodyData.forBet;
   }
 
+
   if (bodyData.eventId) {
     where.eventId = bodyData.eventId;
   }
@@ -2311,6 +2314,10 @@ const getTransactionData = async (req, res) => {
 
   if (bodyData.selectionId) {
     where.selectionId = bodyData.selectionId;
+  }
+
+  if (bodyData.sportId) {
+    where.sportId = bodyData.sportId;
   }
 
   if (bodyData.fromDate && bodyData.toDate) {
@@ -2364,9 +2371,43 @@ const updateExposureOfUser = async (req, res) => {
     }
     let userId = userData.userDetails.userId;
     let userType = userData.userDetails.userType;
-    let update = await updateCoinsTbl(userId, userType);
+    let totalUserCoins = await getUserCoinsByTransactionTable(userId);
+    let updateCoins = totalUserCoins?.totalCoins ? totalUserCoins.totalCoins : 0
+    if (updateCoins < 0) {
+      updateCoins = -1 * updateCoins
+    } else {
+      updateCoins = 0 
+    }
 
-    return SendResponse(res, "success", "", update);
+    if (updateCoins > 0) {
+      let insertTransactionLog = {
+        userId: new ObjectId(userId),
+        amount: updateCoins,
+        gameType: "admin",
+        remarks: "exposure update by admin",
+        overallType: "exposureUpdate",
+        forBet: 0,
+        isDeclare: 1,
+        isComm: 0,
+      }
+
+      let statement = {
+        userId: new ObjectId(userId),
+        amount: updateCoins,
+        userRemark: "exposure update by admin",
+      }
+
+
+      
+
+      await StatementModel.create(statement);
+      await TransactionLogModel.create(insertTransactionLog);
+
+
+      await updateCoinsTbl(userId, userType);
+    }
+
+    return SendResponse(res, "success", "", { updateCoins: updateCoins });
   } catch (error) {
     console.log(error);
   }
@@ -2378,15 +2419,14 @@ const updateInternationalCasinoGamesInDatabase = async (req, res) => {
     const payLoad = {
       operatorId: process.env.OPERATOR_ID,
     };
-    const response = await axios.post(hitUrl, payLoad);
-
+    const response = await axios.post(hitUrl, payLoad); 
     if (response.data && response.data.data) {
       const casinoGames = response.data.data;
       const insertArray = casinoGames.map((casinoData) => {
         delete casinoData._id;
         return casinoData;
       });
-
+    
       await internationalCasinoList.deleteMany();
       const inserted = await internationalCasinoList.insertMany(insertArray);
 
@@ -2874,24 +2914,7 @@ const fillNegativeCoinsToUser = async (req, res) => {
 
 const deleteAllUserData = async (req, res) => {
   try {
-    let bodyData = req.bdy
-    const loginData = req.loggedInUser;
-    if (loginData.userType != "owner") {
-      return SendResponse(res, "error", "only owner authorized to perform, this task");
-    }
-
-
-    let deleteDataUserId = bodyData.deleteDataUserId
-
-    let deleteUserData = await UserModel.findOne({
-      userId: new ObjectId(deleteDataUserId)
-    })
-
-
-
-    _dx(deleteUserData)
-
-    let where = await userWhere(loginData)
+    
 
   } catch (error) { console.log(error) }
 
@@ -3050,6 +3073,7 @@ const getDuplicateResultsOfCasino = async (req, res) => {
         }
       }
     ])
+
     Promise.all(
       resData.map(async (data) => {
         let roundId = data._id
@@ -3248,17 +3272,21 @@ const deleteUserData = async (req, res) => {
   let returnArray = {}
 
 
+  //_dx(deleteWhere)
+
+
+
 
 
   let [transaction, statement, user, ledger, play, fancy, profitLossPosition] = await Promise.all([
-    // TransactionLogModel.deleteMany(deleteWhere),
-    // StatementModel.deleteMany(deleteWhere),
+    //TransactionLogModel.deleteMany(deleteWhere),
+    //StatementModel.deleteMany(deleteWhere),
     UserModel.deleteMany(deleteWhere),
-    // LedgerModel.deleteMany(deleteWhere),
-    // PlayModel.deleteMany(deleteWhere),
+    //LedgerModel.deleteMany(deleteWhere),
+    //PlayModel.deleteMany(deleteWhere),
     // fancyBetListModel.deleteMany(deleteWhere),
-    // profitLossModel.deleteMany(deleteWhere)
-
+    // profitLossModel.deleteMany(deleteWhere),
+   //crickTransaction.deleteMany(deleteWhere)
   ])
 
 
@@ -5858,8 +5886,8 @@ const notificationListSchema = Joi.object({
 
 const notificationList = async (req, res) => {
   try {
-    const { error, value } = notificationListSchema.validate(req.body);
 
+    const { error, value } = notificationListSchema.validate(req.body);
     if (error) {
       return SendResponse(
         res,
@@ -5870,10 +5898,7 @@ const notificationList = async (req, res) => {
     }
 
     const { eventId } = value;
-
-    // Get settings
     const settingData = await getSettingData();
-
     const socketUrl = settingData?.socketUrl;
 
     if (!socketUrl) {
@@ -5884,8 +5909,9 @@ const notificationList = async (req, res) => {
       );
     }
 
-     const hitUrl = `${socketUrl.replace(/\/+$/, "")}/v2/api/getNotificationList`;
+    const hitUrl = `${socketUrl.replace(/\/+$/, "")}/v2/api/getNotificationList`;
 
+    //_d(hitUrl , "hitUrl")
     // Call notification API
     const response = await axios.post(
       hitUrl,
@@ -5918,6 +5944,1378 @@ const notificationList = async (req, res) => {
     );
   }
 };
+
+
+
+const insertUserInPlayModelByMarketId = async (req, res) => {
+  try {
+    const { marketId } = req.body;
+    if (!marketId) {
+      return SendResponse(res, "error", "marketId is required");
+    }
+
+    // Get unique users from both bet collections in parallel
+    const [fancyUserIds, oddsUserIds] = await Promise.all([
+      fancyBetListModel.distinct("userId", { marketId }),
+      oddsBetsModel.distinct("userId", { marketId }),
+    ]);
+
+    // Remove duplicate users
+    const uniqueClientIds = [
+      ...new Map(
+        [...fancyUserIds, ...oddsUserIds]
+          .filter(Boolean)
+          .map((id) => [id.toString(), id])
+      ).values(),
+    ];
+
+    // No users found
+    if (!uniqueClientIds.length) {
+      return SendResponse(res, "success", "done");
+    }
+
+    const findArray = {
+      userId: { $in: uniqueClientIds },
+    };
+
+    // Fetch all required data in parallel
+    const [
+      clientShareDataList,
+      directUserShareDataList,
+      clientDataList,
+    ] = await Promise.all([
+      ShareModel.find(findArray).lean(),
+      directUserShareModel.find(findArray).lean(),
+      UserModel.find({
+        _id: { $in: uniqueClientIds },
+      }).lean(),
+    ]);
+
+    // Convert data into lookup objects
+    const clientShareData = convertKeyObject(
+      clientShareDataList,
+      "userId"
+    );
+
+    const directUserShareDataClient = convertKeyObject(
+      directUserShareDataList,
+      "userId"
+    );
+
+    const clientData = convertKeyObject(
+      clientDataList,
+      "_id"
+    );
+
+    // Prepare bulk operations
+    const bulkOperations = [];
+
+    for (const userId of uniqueClientIds) {
+      const userKey = userId.toString();
+
+      const shareData = clientShareData[userKey];
+      const directUserShareData =
+        directUserShareDataClient[userKey];
+
+      const userData = clientData[userKey];
+
+      // User may have been deleted after the bet was created
+      if (!userData) {
+        console.warn(
+          `User not found for userId: ${userKey}, marketId: ${marketId}`
+        );
+        continue;
+      }
+
+      const matchShareData = getClientShareArray(
+        shareData,
+        "match",
+        userData
+      );
+
+      const insertData = {
+        marketId,
+
+        ownerId: userData.ownerId,
+        subownerId: userData.subownerId,
+        adminId: userData.adminId,
+        superadminId: userData.superadminId,
+        superagentId: userData.superagentId,
+        subadminId: userData.subadminId,
+        masterId: userData.masterId,
+        agentId: userData.agentId,
+        clientId: userData.clientId,
+
+        userId: userData._id,
+
+        parentData: userData.parentData,
+
+        playStatus: 1,
+
+        shareData: JSON.stringify(
+          matchShareData?.matchShareArray || []
+        ),
+
+        userInfo: {
+          username: userData.username,
+          name: userData.name,
+        },
+
+        directUserShareData: JSON.stringify(
+          directUserShareData?.shareData || {}
+        ),
+
+        isMatchPlay: true,
+        isSessionPlay: true,
+      };
+
+
+      bulkOperations.push({
+        updateOne: {
+          filter: {
+            userId: userData._id,
+            marketId,
+          },
+          update: {
+            $set: insertData,
+          },
+          upsert: true,
+        },
+      });
+    }
+
+    // Nothing to insert
+    if (!bulkOperations.length) {
+      return SendResponse(res, "success", "done");
+    }
+
+
+    const result = await PlayModel.bulkWrite(
+      bulkOperations,
+      {
+        ordered: false,
+      }
+    );
+
+
+    return SendResponse(
+      res,
+      "success",
+      "done",
+      {
+        marketId,
+        totalUsers: uniqueClientIds.length,
+        operations: bulkOperations.length,
+        inserted: result.upsertedCount,
+      }
+    );
+
+  } catch (error) {
+    console.error(
+      "insertUserInPlayModelByMarketId error:",
+      error
+    );
+
+    return SendResponse(
+      res,
+      "error",
+      error?.message || "Something went wrong"
+    );
+  }
+};
+
+const checkInternationTransactionFromTransactionId = async (req, res) => {
+  try {
+    let bodyData = req.body;
+    const BET_CHUNK_SIZE = 5000;
+    const TRANSACTION_CHUNK_SIZE = 1000;
+    const mismatched = [];
+    let userData = {}
+
+    let totalTransactionIds = 0;
+    let matchedTransactionCount = 0;
+    let mismatchedTransactionCount = 0;
+
+    let matchedAmount = 0;
+    let mismatchAmountDifference = 0;
+
+    let lastId = null;
+
+    let userCoinsData = {}
+
+    if (bodyData && bodyData.username) {
+        const username = bodyData?.username;
+          userData = await UserModel.findOne({
+          $or: [
+            { username: username },
+            { checkUsername: username?.toUpperCase() }
+          ]
+        }).lean();
+
+          if (!userData) {
+            return SendResponse(
+              res,
+              "error",
+              "userNotFound"
+            );
+          }
+
+           userCoinsData = await GetUserCoins(
+            userData._id,
+            "client"
+          ); 
+      }
+    
+    
+
+
+    while (true) {
+      const betQuery = {
+        transactionId: {
+          $exists: true,
+          $ne: null
+        },
+      };
+
+      if (lastId) {
+        betQuery._id = {
+          $gt: lastId
+        };
+      }
+
+      if (userData._id) {
+              betQuery.clientId  = new ObjectId(userData._id)
+      }
+        
+      
+      
+
+      const bets = await InternationalCasinoBetsModel
+        .find(
+          betQuery,
+          {
+            _id: 1,
+            betId: 1,
+            transactionId: 1
+          }
+        )
+        .sort({
+          _id: 1
+        })
+        .limit(BET_CHUNK_SIZE)
+        .lean();
+
+      // No more records
+      if (!bets.length) {
+        break;
+      }
+
+      // Next pagination ID
+      lastId = bets[bets.length - 1]._id;
+
+      console.log(
+        `[International Transaction] Processing ${bets.length} bets, lastId: ${lastId}`
+      );
+
+
+      const betMap = new Map();
+
+      for (const bet of bets) {
+
+        if (
+          bet.transactionId === undefined ||
+          bet.transactionId === null
+        ) {
+          continue;
+        }
+
+        const transactionId = String(
+          bet.transactionId
+        );
+
+        if (!betMap.has(transactionId)) {
+          betMap.set(transactionId, []);
+        }
+
+        betMap.get(transactionId).push(
+          bet.betId || bet._id
+        );
+      }
+
+      const transactionIds = [
+        ...betMap.keys()
+      ];
+
+      if (!transactionIds.length) {
+        continue;
+      }
+
+      totalTransactionIds += transactionIds.length;
+
+      // ==========================================================
+      // PROCESS TRANSACTION IDS IN CHUNKS
+      // ==========================================================
+
+      for (
+        let i = 0;
+        i < transactionIds.length;
+        i += TRANSACTION_CHUNK_SIZE
+      ) {
+
+        const transactionIdChunk =
+          transactionIds.slice(
+            i,
+            i + TRANSACTION_CHUNK_SIZE
+          );
+
+        // --------------------------------------------------------
+        // TRANSACTION LOG
+        // --------------------------------------------------------
+
+        const [
+          transactionData,
+          crickTransactionData
+        ] = await Promise.all([
+
+          TransactionLogModel.aggregate([
+            {
+              $match: {
+                selectionId: {
+                  $in: transactionIdChunk
+                }
+              }
+            },
+            {
+              $group: {
+                _id: "$selectionId",
+
+                totalAmount: {
+                  $sum: "$amount"
+                }
+              }
+            }
+          ]),
+
+          crickTransaction.aggregate([
+            {
+              $match: {
+                transactionId: {
+                  $in: transactionIdChunk
+                }
+              }
+            },
+            {
+              $group: {
+                _id: "$transactionId",
+
+                totalAmount: {
+                  $sum: "$amount"
+                }
+              }
+            }
+          ])
+
+        ]);
+
+        // ========================================================
+        // CREATE MAPS
+        // ========================================================
+
+        const transactionMap = new Map();
+
+        for (const item of transactionData) {
+
+          transactionMap.set(
+            String(item._id),
+            Number(item.totalAmount || 0)
+          );
+
+        }
+
+        const crickTransactionMap = new Map();
+
+        for (const item of crickTransactionData) {
+
+          crickTransactionMap.set(
+            String(item._id),
+            Number(item.totalAmount || 0)
+          );
+
+        }
+
+        // ========================================================
+        // COMPARE
+        // ========================================================
+
+        for (const transactionId of transactionIdChunk) {
+
+          const transactionAmount =
+            transactionMap.get(transactionId) || 0;
+
+          const crickAmount =
+            crickTransactionMap.get(transactionId) || 0;
+
+          const difference =
+            transactionAmount - crickAmount;
+
+          const betIds =
+            betMap.get(transactionId) || [];
+
+          // ------------------------------------------------------
+          // MATCH
+          // ------------------------------------------------------
+
+          if (transactionAmount === crickAmount) {
+
+            matchedTransactionCount++;
+
+            matchedAmount += transactionAmount;
+
+          }
+
+          // ------------------------------------------------------
+          // MISMATCH
+          // ------------------------------------------------------
+
+          else {
+
+            mismatchedTransactionCount++;
+
+            mismatchAmountDifference +=
+              Math.abs(difference);
+
+            mismatched.push({
+              transactionId,
+
+              betIds,
+
+              transactionModelAmount:
+                transactionAmount,
+
+              crickTransactionModelAmount:
+                crickAmount,
+
+              difference,
+
+              absoluteDifference:
+                Math.abs(difference)
+            });
+
+          }
+        }
+      }
+
+      // Free references before next batch
+      // betMap/transaction arrays automatically become
+      // eligible for GC after loop iteration.
+
+      console.log(
+        `[International Transaction] Progress`,
+        {
+          totalTransactionIds,
+          matchedTransactionCount,
+          mismatchedTransactionCount,
+          mismatchAmountDifference
+        }
+      );
+    }
+
+    // ============================================================
+    // RESPONSE
+    // ============================================================
+
+    const returnData = {
+      success: true,
+
+      summary: {
+        totalTransactionIds,
+
+        matchedTransactionCount,
+
+        mismatchedTransactionCount,
+
+        matchedAmount,
+
+        totalMismatchDifference:
+          mismatchAmountDifference
+      },
+
+      mismatched,
+
+      userCoinsData
+    };
+
+    return SendResponse(
+      res,
+      "success",
+      "",
+      returnData
+    );
+
+  } catch (error) {
+
+    console.error(
+      "checkInternationTransactionFromTransactionId error:",
+      error
+    );
+
+    throw error;
+  }
+};
+
+
+const updateInternationCoinMultiplier = async (req, res) => {
+  try {
+    const { type, data } = req.body || {};
+
+    // Validate type
+    if (!["provider", "subProvider"].includes(type)) {
+      return SendResponse(
+        res,
+        "error",
+        "type must be provider or subProvider"
+      );
+    }
+
+    // Validate data
+    if (!Array.isArray(data) || data.length === 0) {
+      return SendResponse(
+        res,
+        "error",
+        "data must be a non-empty array"
+      );
+    }
+
+    // Validate and prepare all update operations before executing
+    const operations = [];
+    const seenNames = new Set();
+
+    for (const item of data) {
+      if (
+        !item ||
+        typeof item.name !== "string" ||
+        !item.name.trim()
+      ) {
+        return SendResponse(
+          res,
+          "error",
+          "Each data item must have a valid name"
+        );
+      }
+
+      const typeName = item.name.trim();
+      const coinMultiplier = Number(item.coinMultiplier);
+
+      if (
+        item.coinMultiplier === null ||
+        item.coinMultiplier === undefined ||
+        item.coinMultiplier === "" ||
+        !Number.isFinite(coinMultiplier) ||
+        coinMultiplier <= 0
+      ) {
+        return SendResponse(
+          res,
+          "error",
+          `coinMultiplier must be a positive number for ${typeName}`
+        );
+      }
+
+      const normalizedName = typeName.toLowerCase();
+
+      // Avoid duplicate updates for the same name
+      if (seenNames.has(normalizedName)) {
+        return SendResponse(
+          res,
+          "error",
+          `Duplicate name found: ${typeName}`
+        );
+      }
+
+      seenNames.add(normalizedName);
+
+      const updateWhere = {
+        providerName: {
+          $regex: `^${typeName.replace(
+            /[.*+?^${}()|[\]\\]/g,
+            "\\$&"
+          )}$`,
+          $options: "i"
+        }
+      };
+
+      // If subProvider is a separate database field in your schema,
+      // change the filter above to use that field instead.
+      operations.push({
+        updateMany: {
+          filter: updateWhere,
+          update: {
+            $set: { coinMultiplier }
+          },
+          upsert: false
+        }
+      });
+    }
+
+    const result = await internationalCasinoList.bulkWrite(
+      operations,
+      { ordered: true }
+    );
+
+    return SendResponse(
+      res,
+      "success",
+      "International coin multiplier updated successfully",
+      {
+        type,
+        requested: operations.length,
+        matched: result.matchedCount,
+        modified: result.modifiedCount
+      }
+    );
+  } catch (error) {
+    console.error(
+      "updateInternationCoinMultiplier error:",
+      error
+    );
+
+    return SendResponse(
+      res,
+      "error",
+      error.message || "Something went wrong"
+    );
+  }
+};
+
+
+
+
+const getInternationCoinMultiplierList = async (req, res) => {
+  try {
+    const { type, data } = req.body || {};
+
+        const resultData = await internationalCasinoList.aggregate([
+        {
+          $match: {
+            coinMultiplier: { $gt: 0 }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              providerName: "$providerName",
+              subProviderName: "$subProviderName",
+              coinMultiplier: "$coinMultiplier"
+            }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            providerName: "$_id.providerName",
+            subProviderName: "$_id.subProviderName",
+            coinMultiplier: "$_id.coinMultiplier"
+          }
+        }
+      ]);
+
+
+    
+    return SendResponse(
+       res,
+      "success",
+      "International coin multiplier get successfully",
+      resultData,
+    );
+
+
+ 
+  } catch (error) {
+    console.error(
+      "updateInternationCoinMultiplier error:",
+      error
+    );
+
+    return SendResponse(
+      res,
+      "error",
+      error.message || "Something went wrong"
+    );
+  }
+};
+
+
+const resetOtp = async (req, res) => {
+  const bodyData = req.body;
+  const loggedUserData = req.loggedInUser;
+  const userId = new ObjectId(bodyData.userId);
+  const userType = bodyData.userType;
+  let userWhere = await whereHelper(loggedUserData, {
+    userId : userId
+  });
+  
+  let otp = Math.floor(Math.random() * 1000000);
+  let updateData = await UserModel.updateOne(userWhere, { otp: otp });
+  
+   return SendResponse(
+      res,
+      "success",
+      `update otp is successfull`
+    );
+};
+
+
+
+
+
+
+const allProfitLossCommHistory = async (req, res) => {
+  try {
+    const bodyData = req.body;
+    const loginData = req.loggedInUser;
+
+    let userType = loginData.userType;
+    let directUserId = loginData.userId;
+
+    // Selected user
+    if (bodyData.userId && bodyData.userType) {
+      directUserId = bodyData.userId;
+      userType = bodyData.userType;
+    }
+
+    // Username search
+    if (bodyData.username) {
+      const userResult = await getUserIdByUsername(bodyData.username);
+
+      if (userResult?.userDetails) {
+        directUserId = userResult.userDetails.id;
+        userType = userResult.userDetails.userType;
+      }
+    }
+
+    const directUserData = await gettingDirectUserByUserId(directUserId);
+
+    const userDataArray = Object.values(
+      directUserData?.userDataArray || {}
+    );
+
+    if (!userDataArray.length) {
+      return SendResponse(res, "success", "fetch successfully", {
+        allUserData: [],
+        topWinningClients: [],
+        topLosingClients: [],
+        totalClientCount: 0,
+        totalClientExposure: 0,
+      });
+    }
+
+    // All users should belong to the same downline level.
+    const targetUserType = userDataArray[0].userType;
+    const creatorUserType =
+      userDataArray[0].creatorShareData?.userType;
+
+    if (!creatorUserType) {
+      throw new Error("Creator user type not found");
+    }
+
+    // Prepare user lookup
+    const userMap = new Map();
+
+    const userIds = userDataArray
+      .filter(user => user.userType === targetUserType)
+      .map(user => {
+        userMap.set(user.userId.toString(), user);
+        return user.userId;
+      });
+
+    if (!userIds.length) {
+      return SendResponse(res, "success", "fetch successfully", {
+        allUserData: [],
+        topWinningClients: [],
+        topLosingClients: [],
+        totalClientCount: 0,
+        totalClientExposure: 0,
+      });
+    }
+
+    // Base MongoDB filter
+    const where = await whereHelper(loginData, {
+      transactionType: "profitLoss",
+    });
+
+    // Dynamic user filter
+    where[`${targetUserType}Id`] = {
+      $in: userIds,
+    };
+
+    // Additional filters
+    if (bodyData.marketId) {
+      where.marketId = bodyData.marketId;
+    }
+
+    if (bodyData.marketType) {
+      where.marketType = bodyData.marketType;
+    }
+
+    if (bodyData.selectionId) {
+      where.selectionId = bodyData.selectionId;
+    }
+
+    if (bodyData.fromDate && bodyData.toDate) {
+      where.date = await dateWhereCond(
+        bodyData.fromDate,
+        bodyData.toDate
+      );
+    }
+
+    // Dynamic fields
+    const creatorLedgerField = `$${creatorUserType}LedgerAmount`;
+    const creatorProfitLossField = `$${creatorUserType}ProfitLoss`;
+    const userLedgerField = `$${targetUserType}LedgerAmount`;
+
+    // Aggregation
+    const aggregationPipeline = [
+      {
+        $match: where,
+      },
+      {
+        $group: {
+          _id: `$${targetUserType}Id`,
+
+          userLedgerAmountWithutComm: {
+            $sum: {
+              $cond: [
+                { $eq: ["$isComm", 0] },
+                { $ifNull: [creatorLedgerField, 0] },
+                0,
+              ],
+            },
+          },
+
+          ownAmount: {
+            $sum: {
+              $cond: [
+                { $eq: ["$isComm", 0] },
+                { $ifNull: [creatorProfitLossField, 0] },
+                0,
+              ],
+            },
+          },
+
+          totalAmountofClientWithoutComm: {
+            $sum: {
+              $cond: [
+                { $eq: ["$isComm", 0] },
+                { $ifNull: ["$amount", 0] },
+                0,
+              ],
+            },
+          },
+
+          totalCommOfClient: {
+            $sum: {
+              $cond: [
+                { $eq: ["$isComm", 1] },
+                { $ifNull: ["$amount", 0] },
+                0,
+              ],
+            },
+          },
+
+          userComm: {
+            $sum: {
+              $cond: [
+                { $eq: ["$isComm", 1] },
+                { $ifNull: [userLedgerField, 0] },
+                0,
+              ],
+            },
+          },
+
+          parentComm: {
+            $sum: {
+              $cond: [
+                { $eq: ["$isComm", 1] },
+                { $ifNull: [creatorLedgerField, 0] },
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ];
+
+    // Client counts and aggregation in parallel
+    const clientFilter = {
+      [`${userType}Id`]: new ObjectId(directUserId),
+      userType: "client",
+    };
+
+    const [userResdata, totalClientCount, totalClientExposure] =
+      await Promise.all([
+        crickTransaction.aggregate(aggregationPipeline),
+
+        UserModel.countDocuments(clientFilter),
+
+        UserModel.countDocuments({
+          ...clientFilter,
+          exposure: { $lt: 0 },
+        }),
+      ]);
+
+    // Map aggregated result to user details
+    const allUserData = userResdata.map(item => {
+      const user = userMap.get(item._id.toString());
+
+      if (!user) return null;
+
+      // Maintain existing commission calculation
+      if (targetUserType === "client") {
+        item.userComm = item.totalCommOfClient;
+      } else {
+        item.userComm = -1 * item.userComm;
+      }
+
+      item.userData = {
+        username: user.username,
+        name: user.name,
+        coins: user.coins,
+        userType: user.userType,
+      };
+
+      return item;
+    }).filter(Boolean);
+
+    // Only clients for winning/losing rankings
+  // Calculate combined amount
+const clientResults = allUserData
+  .filter(item => item.userData.userType === "client")
+  .map(item => ({
+    id: item._id,
+    name: item.userData.name,
+    username: item.userData.username,
+    amount:
+      (item.userLedgerAmountWithutComm || 0) +
+      (item.totalCommOfClient || 0),
+  }));
+
+// Top 10 Winning Clients
+const topWinningClients = [...clientResults]
+  .filter(item => item.amount > 0)
+  .sort((a, b) => b.amount - a.amount)
+  .slice(0, 10)
+  .map(({ id, name, username, amount }) => ({
+    id,
+    name,
+    username,
+    winning: amount,
+  }));
+
+// Top 10 Losing Clients
+const topLosingClients = [...clientResults]
+  .filter(item => item.amount < 0)
+  .sort((a, b) => a.amount - b.amount)
+  .slice(0, 10)
+  .map(({ id, name, username, amount }) => ({
+    id,
+    name,
+    username,
+    losing: Math.abs(amount),
+  }));
+    
+
+    return SendResponse(
+      res,
+      "success",
+      "fetch successfully",
+      {
+        allUserData,
+
+        topWinningClients,
+
+        topLosingClients,
+
+        totalClientCount,
+
+        totalClientExposure,
+      }
+    );
+
+  } catch (error) {
+    console.error("allProfitLossCommHistory Error:", error);
+
+    return SendResponse(
+      res,
+      "error",
+      "Something went wrong"
+    );
+  }
+};
+
+
+
+
+const clientHistory = async (req, res) => {
+  try {
+    const bodyData = req.body;
+    const loginData = req.loggedInUser;
+
+    let userType = loginData.userType;
+    let directUserId = loginData.userId;
+
+    // Specific user selection
+    if (bodyData.userId && bodyData.userType) {
+      directUserId = bodyData.userId;
+      userType = bodyData.userType;
+    }
+
+    // Username selection
+    if (bodyData.username) {
+      const userResult = await getUserIdByUsername(bodyData.username);
+
+      if (userResult?.userDetails) {
+        directUserId = userResult.userDetails.id;
+        userType = userResult.userDetails.userType;
+      }
+    }
+
+    // Dynamic fields
+    const profitLossField = `${userType}ProfitLoss`;
+    const ledgerField = `${userType}LedgerAmount`;
+
+    // Date range (Asia/Kolkata)
+    const startDate = bodyData.startDate
+      ? moment.tz(bodyData.startDate, "Asia/Kolkata").startOf("day")
+      : moment.tz("Asia/Kolkata").startOf("day");
+
+    const endDate = bodyData.endDate
+      ? moment.tz(bodyData.endDate, "Asia/Kolkata").endOf("day")
+      : moment.tz("Asia/Kolkata").endOf("day");
+
+    if (!startDate.isValid() || !endDate.isValid() || startDate.isAfter(endDate)) {
+      return SendResponse(res, "error", "Invalid date range");
+    }
+
+    // Existing hierarchy filter
+    const where = whereHelper(loginData, {
+      userId: new ObjectId(directUserId),
+    });
+
+
+
+    // where.date = {
+    //   $gte: startDate.valueOf(),
+    //   $lte: endDate.valueOf(),
+    // };
+
+    const profitLossExpression = {
+      $ifNull: [`$${profitLossField}`, 0],
+    };
+
+    const ledgerExpression = {
+      $ifNull: [`$${ledgerField}`, 0],
+    };
+
+    const pipeline = [
+      {
+        $match: where,
+      },
+
+      {
+        $addFields: {
+          reportDate: {
+            $dateToString: {
+              format: "%Y-%m-%d",
+              date: { $toDate: "$date" },
+              timezone: "Asia/Kolkata",
+            },
+          },
+          game: {
+            $ifNull: [
+              "$gameName",
+              { $ifNull: ["$gameType", "Other"] },
+            ],
+          },
+          gameCategory: {
+            $ifNull: ["$marketType", "Other"],
+          },
+        },
+      },
+
+      {
+        $facet: {
+          // 1. Overall Summary
+          overallSummary: [
+            {
+              $group: {
+                _id: null,
+
+                totalDeposit: {
+                        $sum: {
+                          $cond: [
+                            {
+                              $and: [
+                                { $eq: ["$transactionType", "depositWithdraw"] },
+                                { $gt: ["$amount", 0] }
+                              ]
+                            },
+                            "$amount",
+                            0
+                          ]
+                        }
+                      },
+
+                      totalWithdraw: {
+                        $sum: {
+                          $cond: [
+                            {
+                              $and: [
+                                { $eq: ["$transactionType", "depositWithdraw"] },
+                                { $lt: ["$amount", 0] }
+                              ]
+                            },
+                            { $abs: "$amount" },
+                            0
+                          ]
+                        }
+                      },
+    
+                totalProfitLoss: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 0] },
+                      profitLossExpression,
+                      0,
+                    ],
+                  },
+                },
+
+                totalLedger: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 0] },
+                      ledgerExpression,
+                      0,
+                    ],
+                  },
+                },
+
+                totalBetAmount: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 0] },
+                      "$amount",
+                      0,
+                    ],
+                  },
+                },
+
+                totalCommission: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 1] },
+                      "$amount",
+                      0,
+                    ],
+                  },
+                },
+
+                commissionLedger: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 1] },
+                      ledgerExpression,
+                      0,
+                    ],
+                  },
+                },
+
+                commissionProfitLoss: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 1] },
+                      profitLossExpression,
+                      0,
+                    ],
+                  },
+                },
+
+                totalTransactions: {
+                  $sum: 1,
+                },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+              },
+            },
+          ],
+
+          // 2. Date-wise Summary
+          dailyReport: [
+            {
+              $group: {
+                _id: "$reportDate",
+
+                profitLoss: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 0] },
+                      profitLossExpression,
+                      0,
+                    ],
+                  },
+                },
+
+                ledger: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 0] },
+                      ledgerExpression,
+                      0,
+                    ],
+                  },
+                },
+
+                commission: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 1] },
+                      "$amount",
+                      0,
+                    ],
+                  },
+                },
+
+                commissionLedger: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 1] },
+                      ledgerExpression,
+                      0,
+                    ],
+                  },
+                },
+
+                transactionCount: {
+                  $sum: 1,
+                },
+              },
+            },
+            {
+              $sort: { _id: -1 },
+            },
+          ],
+
+          // 3. Date + Game-wise Report
+          gameWiseReport: [
+            {
+              $group: {
+                _id: {
+                  date: "$reportDate",
+                  game: "$game",
+                  gameType: "$gameType",
+                  marketType: "$gameCategory",
+                  sportId: "$sportId",
+                },
+
+                profitLoss: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 0] },
+                      profitLossExpression,
+                      0,
+                    ],
+                  },
+                },
+
+                ledger: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 0] },
+                      ledgerExpression,
+                      0,
+                    ],
+                  },
+                },
+
+                betAmount: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 0] },
+                      "$amount",
+                      0,
+                    ],
+                  },
+                },
+
+                commission: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 1] },
+                      "$amount",
+                      0,
+                    ],
+                  },
+                },
+
+                commissionLedger: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$isComm", 1] },
+                      ledgerExpression,
+                      0,
+                    ],
+                  },
+                },
+
+                transactionCount: {
+                  $sum: 1,
+                },
+              },
+            },
+            {
+              $sort: {
+                "_id.date": -1,
+                "_id.game": 1,
+              },
+            },
+          ],
+        },
+      },
+    ];
+
+    const [report] = await crickTransaction.aggregate(pipeline);
+
+    const returnData = {
+      summary: report?.overallSummary?.[0] || {
+        totalProfitLoss: 0,
+        totalLedger: 0,
+        totalBetAmount: 0,
+        totalCommission: 0,
+        commissionLedger: 0,
+        commissionProfitLoss: 0,
+        totalTransactions: 0,
+      },
+
+      dailyReport: report?.dailyReport || [],
+
+      gameWiseReport: report?.gameWiseReport || [],
+    };
+
+    return SendResponse(
+      res,
+      "success",
+      "Client history fetched successfully",
+      returnData
+    );
+
+  } catch (error) {
+    console.error("clientHistory Error:", error);
+    return SendResponse(res, "error", "Something went wrong");
+  }
+};
+
 
 module.exports = {
   createDomain,
@@ -6012,5 +7410,12 @@ module.exports = {
   userExposureList,
   userExposureListUpdateBulk,
   cancelWithdrawReqByclient,
-  notificationList
+  notificationList,
+  insertUserInPlayModelByMarketId,
+  checkInternationTransactionFromTransactionId,
+  updateInternationCoinMultiplier,
+  getInternationCoinMultiplierList,
+  resetOtp,
+  allProfitLossCommHistory,
+  clientHistory
 };

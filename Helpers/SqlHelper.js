@@ -19,7 +19,7 @@ const dbService = {
       const where = toWhereClause(filter);
       const query = `SELECT ${projection} FROM ${table} WHERE ${filter}`;
 
-      _d(query , "query")
+     // _d(query , "query")
       const result = await con.query(query);
       return returnResponse("success", "fetched", serializeQueryResult(result));
     } catch (err) {

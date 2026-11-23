@@ -20,7 +20,6 @@ const {
   gettingDirectUserByUserId,
 } = require("../../Helpers/UsersUtils");
 const TransactionLogModel = require("../../Models/TransactionLog.model");
-const { isNull } = require("lodash");
 const {
   getOddsPositionByMarketWise,
   getMatchList,
@@ -47,7 +46,6 @@ function buildCondSum(conditionsArray, amountField) {
 }
 
 const transactionHelper = require("../../Helpers/TransactionHelper")
-const { InsertUserStatement } = require("../../Helpers/StatementHelper");
 
 const {
   UserTypes,

@@ -8,7 +8,7 @@ const {
   SendResponse,
   sendCasinoResponse,
 } = require("../Helpers/ResponseMapper");
-const { AuthErrMsg, siteSetting } = require("../Common/Constants");
+const { siteSetting } = require("../Common/Constants");
 const UserService11 = require("../Services/User/User.service");
 const { client } = require("../Helpers/RedisHelper");
 const { _dx, _d } = require("../Helpers/CommonHelper");
@@ -21,9 +21,7 @@ const { msg } = require("../Helpers/MessageHelper");
 const { isBot } = require("../Helpers/BotDetector");
 
 async function verifyToken(req, res, next) {
-  // ============================================================
-  // BOT/SCRIPT DETECTION — block before any processing
-  // ============================================================
+
   if (isBot(req)) {
     return SendResponse(res, "Unauthorized", msg("auth.botDetected"));
   }
@@ -36,10 +34,6 @@ async function verifyToken(req, res, next) {
   try {
     const clientIp = requestIp.getClientIp(req) || "";
     const path = req.route.path;
-
-    // ============================================================
-    // 1. JWT VERIFY
-    // ============================================================
 
     let decodedToken;
     try {
@@ -63,9 +57,6 @@ async function verifyToken(req, res, next) {
       .update(clientIp)
       .digest("hex");
 
-    // ============================================================
-    // 2. FETCH USER — Redis first, DB fallback
-    // ============================================================
 
     let user = null;
     let userStatus = 0;
@@ -101,66 +92,37 @@ async function verifyToken(req, res, next) {
       userStatus = Number(user.status);
     }
 
-    // ============================================================
-    // 3. USER VALIDITY CHECK — must come before jwtToken access
-    // ============================================================
 
     if (!user || !userStatus) {
       return SendResponse(res, "Unauthorized", msg("auth.invalidUser"));
     }
 
-    // ============================================================
-    // 4. JWT TOKEN CHECK — all user types
-    // ============================================================
-
     if (!user.jwtToken || user.jwtToken === "") {
       return SendResponse(res, "Unauthorized", msg("auth.tokenExpired"));
     }
-
-    // JWT token must match stored token — ensures single active session
-    // This applies to ALL user types (client, agent, admin, owner etc.)
-    // Only demo clients are exempted
-    if (!user.isDemoClient && token !== user.jwtToken) {
-      return SendResponse(res, "Unauthorized", msg("auth.loggedInElsewhere"));
-    }
-
-    // ============================================================
-    // 5. CLIENT-SPECIFIC CHECKS — device hash + auth token
-    // ============================================================
-
+    
     if (decodedToken.userType === "client") {
-      // Device hash or auth token mismatch — someone stole the token
-      if (decodedToken.deviceHash !== currentHash || user.authenticateToken != decodedToken.authToken) {
-        return SendResponse(res, "Unauthorized", msg("auth.tokenExpired"));
-      }
-    }
-
-    // ============================================================
-    // 6. USER BALANCE SHORTCUT — with rate limiting
-    // ============================================================
-
-    if (path === "/userBalance") {
-      if (siteSetting.IS_REDIS) {
-        try {
-          const balanceRateKey = `balance:rate:${decodedToken.userId}`;
-          const balanceAllowed = await client.set(balanceRateKey, "1", "NX", "EX", 1);
-          if (balanceAllowed !== "OK") {
-            return SendResponse(res, "error", msg("auth.balanceRateLimited"));
+        if (!user.isDemoClient && process.env.IS_CLIENT_MULTILOGIN !== "true") {
+          if (decodedToken.deviceHash !== currentHash || user.authenticateToken != decodedToken.authToken && token !== user.jwtToken) {
+            return SendResponse(res, "Unauthorized", msg("auth.tokenExpired"));
           }
-        } catch (_) {}
-      }
-
-      return SendResponse(res, "Success", "", {
-        coins: user.coins,
-        exposure: user.exposure,
-        profitLoss: user.profitLoss ? user.profitLoss : 0,
-      });
+        }else if(user.isDemoClient && process.env.IS_DEMO_CLIENT_ACCESS !== "true"){
+          if (decodedToken.deviceHash !== currentHash || user.authenticateToken != decodedToken.authToken && token !== user.jwtToken) {
+            return SendResponse(res, "Unauthorized", msg("auth.tokenExpired"));
+          }
+        }
     }
 
-    // ============================================================
-    // 7. REQUEST TRACKING (non-blocking)
-    // ============================================================
 
+    if (path == "/userBalance") {
+          return SendResponse(res, "Success", "", {
+            coins: user.coins,
+            exposure: user.exposure,
+            profitLoss:  user.profitLoss ? user.profitLoss : 0,
+          });
+    }
+    
+ 
     setImmediate(() => {
       TrackingModel.create({
         userId: decodedToken.userId,
@@ -176,9 +138,6 @@ async function verifyToken(req, res, next) {
       });
     });
 
-    // ============================================================
-    // 8. PASS TO NEXT MIDDLEWARE
-    // ============================================================
 
     req.loggedInUser = decodedToken;
     next();
@@ -192,27 +151,31 @@ async function verifyToken(req, res, next) {
 
 async function verifyCasinoToken(req, res, next) {
   const bodyData = req.body;
-  const IS_REDIS = siteSetting.IS_REDIS;
   try {
     if (!bodyData.token) {
       return sendCasinoResponse(res, "token_not_found");
     }
 
-    if (IS_REDIS) {
-      const user = await client.hgetall(bodyData.userId);
+    const user = await client.hgetall(bodyData.userId);
+
+    if (user) {
       if (!bodyData.transactionId) {
-        if (bodyData.isDiamond) {
-          user.intCasinoMultiply = 1;
+        let intCasinoMultiply = user.intCasinoMultiply
+          ? user.intCasinoMultiply
+          : siteSetting.casinoMultipleTimesCoins
+
+        if (bodyData.isGalaxy) {
+          intCasinoMultiply = 1;
         }
         const balance = Math.round(
           user.coins /
-            (user.intCasinoMultiply
-              ? user.intCasinoMultiply
-              : siteSetting.casinoMultipleTimesCoins)
+          intCasinoMultiply
         );
         return sendCasinoResponse(res, "success", balance);
       }
     }
+
+
 
     let userData = await UserModel.findOne(
       {
@@ -253,7 +216,7 @@ async function verifyCasinoToken(req, res, next) {
     req.loggedInUser = userData;
     next();
   } catch (error) {
-  console.log(error)
+    console.log(error)
     return sendCasinoResponse(res, "request_time_out");
   }
 }
@@ -385,7 +348,7 @@ const isOwnerAndStaff = async (req, res, next) => {
     // Try Redis
     const cached = await client.hget(String(staffId), "permissions").catch(() => null);
     if (cached) {
-      try { permissions = JSON.parse(cached); } catch (_) {}
+      try { permissions = JSON.parse(cached); } catch (_) { }
     }
 
     // Fallback to DB
@@ -398,7 +361,7 @@ const isOwnerAndStaff = async (req, res, next) => {
 
       // Cache permissions in Redis for next time
       setImmediate(() => {
-        client.hset(String(staffId), ["permissions", JSON.stringify(permissions)]).catch(() => {});
+        client.hset(String(staffId), ["permissions", JSON.stringify(permissions)]).catch(() => { });
       });
     }
 

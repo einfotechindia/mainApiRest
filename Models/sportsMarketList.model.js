@@ -45,6 +45,10 @@ const SportMarketListSchema = new mongoose.Schema(
       type: String,
       default: "UPCOMING",
     },
+    notification: {
+      type: String,
+      default: "",
+    },
     playStatus: {
       type: Boolean,
       default: true,

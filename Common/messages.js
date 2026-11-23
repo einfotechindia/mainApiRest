@@ -20,6 +20,15 @@
  *   msg("transaction.insufficientCoins")         → default if project key missing
  */
 
+
+
+/*
+bpexch,
+diamond,
+default
+ */
+
+
 module.exports = {
 
   // ============================================================
@@ -27,14 +36,16 @@ module.exports = {
   // ============================================================
   "auth.invalidCredentials": {
     default: "Invalid username or password",
-    // crickexpo: "Wrong username or password. Please try again.",
-    // winx777: "Login failed. Check your credentials.",
+    bpexch: "Username/Password Incorrect.",
+    diamond: "User not exist.",
   },
   "auth.accountLocked": {
     default: "Your account is locked. Please contact your agent",
+    bpexch: "Acount Inactive",
   },
   "auth.accountInactive": {
     default: "Your account is inactive. Please contact your agent",
+   bpexch: "Acount Inactive",
   },
   "auth.sessionExpired": {
     default: "Session expired. Please login again",
@@ -84,11 +95,10 @@ module.exports = {
   "auth.tooManyLoginAttempts": {
     default: "Too many login attempts. Please try after {minutes} minutes.",
   },
-  "auth.invalidCredentials": {
-    default: "Invalid user name or password",
-  },
+
   "auth.userInactive": {
     default: "You Are Inactive Please Active First By Upperline",
+    bpexch: "Acount Inactive",
   },
   "auth.domainNotAllowed": {
     default: "User credentials are wrong",
@@ -140,19 +150,28 @@ module.exports = {
   // ============================================================
   // BET PLACEMENT
   // ============================================================
+
+   "bet.maximumProfitExceeded": {
+    default: "Maximum Profit Of Market {market} is Allowed {maxProfit} . Please Contact Your Agent.",
+  },
+
   "bet.oddsSuccess": {
     default: "{oddsType} Bets Placed Successfully",
     crickexpo: "Your {oddsType} bet is confirmed!",
-    winx777: "{oddsType} Bet Done!",
+    diamond: "Bet placed Sucessfully",
   },
   "bet.sessionSuccess": {
     default: "Session Bet Placed Successfully",
   },
   "bet.invalidAmount": {
     default: "Invalid Amount",
+    diamond: "Bet Not Confirm Check Balance.",
+    bpexch: "Insufficient balance"
+    
   },
   "bet.invalidFancyAmount": {
     default: "Invalid Fancy Amount",
+    
   },
   "bet.betLocked": {
     default: "Your bet is locked please contact your agent",
@@ -198,6 +217,7 @@ module.exports = {
   },
   "bet.maxSize": {
     default: "Max Size Is {maxSize}",
+    diamond : "Check Maximum Bet Limit."
   },
   "bet.onlyMultiBets": {
     default: "Only multi bets is accepted",

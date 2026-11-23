@@ -1,6 +1,6 @@
 const {
   SendResponse,
-  returnResponse,
+  returnResponse
 } = require("../../Helpers/ResponseMapper");
 const {
   updateCoinsTbl,

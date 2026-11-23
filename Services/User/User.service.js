@@ -11,7 +11,6 @@ const NotificationModel = require("../../Models/Notification.model");
 const LedgerModel = require("../../Models/Ledger.model");
 const { InsertUserStatement } = require("../../Helpers/StatementHelper");
 const InternationalCasinoBetsModel = require("../../Models/BetsList/InternationalCasinoBetsList.model");
-const internationalCasinoList = require("../../Models/internationalCasinoList.model");
 const qtechGamesModel = require("../../Models/qtech.model");
 const profitLossPosition = require("../../Models/BetsList/profitLossPosition.model");
 const OddsBetModel = require("../../Models/BetsList/OddsBetsList.model");
@@ -93,12 +92,8 @@ const moment = require("moment-timezone");
 moment.tz.setDefault("Asia/Kolkata");
 const { isEmpty, create } = require("lodash");
 const { ObjectId } = require("mongodb");
-const satelize = require("satelize");
-const constant = require("../../utils/constants");
-const IP = require("ip");
 const axios = require("axios");
 const TransactionLogModel = require("../../Models/TransactionLog.model");
-const PlayModel = require("../../Models/Play.model");
 // const { json } = require("body-parser");
 axios.defaults.timeout = siteSetting.axiosTimeOut;
 
@@ -111,7 +106,7 @@ let userDetailsByUserId = async (userId, specific) => {
   );
 };
 
-async function UserCreate(bodyData, loginUserData) {
+async function UserCreate(bodyData, loginUserData , req = {}) {
   try {
     let {
       username,
@@ -152,7 +147,8 @@ async function UserCreate(bodyData, loginUserData) {
       exposureLimit,
       minMaxComm,
       isPasswordChanged,
-      phpUserId
+      phpUserId,
+      betChipsData
     } = bodyData;
 
     let settingData = await getSettingData();
@@ -325,7 +321,7 @@ async function UserCreate(bodyData, loginUserData) {
       const countUsertype = await UserModel.countDocuments({
         userType: userType,
       });
-      formattedUsername = await UsersCode(userType, countUsertype);
+      formattedUsername = await UsersCode(userType, countUsertype , req);
       transactionPassword = password;
     }
 
@@ -481,7 +477,7 @@ async function UserCreate(bodyData, loginUserData) {
       referral: referral,
       isPasswordChanged : isPasswordChanged ? isPasswordChanged : false,
       phpUserId : phpUserId ? phpUserId : 0,
-      isOtpRequired : creator.isOtpRequired ? creator.isOtpRequired : false
+      isOtpRequired: creator.isOtpRequired ? creator.isOtpRequired : false,
     };
 
     if (bodyData.isDirect) {
@@ -652,10 +648,15 @@ async function UserCreate(bodyData, loginUserData) {
       otp: otp,
     };
 
-    if (userType == "client") {
-      queryObj.betChipsData = betChipsData;
+    if (userType == "client" && bodyData?.betChipsData) {
+      queryObj.betChipsData = bodyData?.betChipsData;
     }
 
+    if (bodyData.betChipsData && betChipsData.length > 0) {
+        queryObj.betChipsData = bodyData.betChipsData
+    }
+
+    
     let userIdArray = [
       creator.ownerId,
       creator.subownerId,
@@ -706,11 +707,12 @@ async function UserCreate(bodyData, loginUserData) {
     };
     await InsertUserActivity(activityData, user);
 
-    if (siteSetting.sportsSetting) {
-      let creatorSportsSetting = await SportsSettingModel.findOne({
+  
+  let creatorSportsSetting = await SportsSettingModel.findOne({
         userId: creatorId,
-      });
-      if (creatorSportsSetting) {
+  });
+    
+    if (creatorSportsSetting) {
         creatorSportsSetting = JSON.parse(JSON.stringify(creatorSportsSetting));
         creatorSportsSetting.userType = userType;
         creatorSportsSetting.userId = userId;
@@ -721,9 +723,11 @@ async function UserCreate(bodyData, loginUserData) {
         delete creatorSportsSetting.createdAt;
         delete creatorSportsSetting.updatedAt;
         delete creatorSportsSetting.date;
+        delete creatorSportsSetting.selfSetting;
         const create = await SportsSettingModel.create(creatorSportsSetting);
-      }
     }
+
+   
 
     if (siteSetting.sportsConfig) {
       let insertConfigData = [];
@@ -829,9 +833,15 @@ async function userUpdate(req, res) {
     isOtpRequired
     
   } = req.body;
+    
+    
+    
 
     const bodyData = req.body;
     let updateDirectShareData = false
+
+
+    //_dx(bodyData)
     
   const userData = await isUserAuthorizedToUpdate(req.loggedInUser, userId);
   if (!userData) {
@@ -1336,10 +1346,14 @@ async function userUpdate(req, res) {
     updateDirectShareData = true
   }
 
+    
+
   if (betChipsData && userData.userType == "client") {
     objToUpdate.betChipsData = betChipsData;
   }
 
+  
+  
   if (creditReference && userData.creditReference !== creditReference) {
     await updateCreditReference(creditReference, userData, req.loggedInUser);
     objToUpdate.creditReference = creditReference;
@@ -1603,9 +1617,6 @@ async function userUpdate(req, res) {
     }
   }
     
-    //  _d(parentData.userFlatSharePermission)
-    //  changeCasinoFlatShare = true
-    //  parentData.userFlatSharePermission = false
 
   if (changeCasinoFlatShare && !parentData.userFlatSharePermission) {
     let userShareData = await ShareModel.findOne({
@@ -1688,6 +1699,7 @@ async function userUpdate(req, res) {
   }
 
   
+  //_d(objToUpdate, "objToUpdate")
 
   if (!isEmpty(objToUpdate)) {
     await UserModel.where("_id", userId).updateOne({
@@ -1703,12 +1715,7 @@ async function userUpdate(req, res) {
       client.del(userId)
     ])
 
-  // await client.del(`${userId}_SHARE_DATA`);
-  // await client.del(`${parentData.userId}_SHARE_DATA`);
-  // await client.del(userId);
-    
 
-  // _d(creatorShareDataUpdateToDownline , "creatorShareDataUpdateToDownline")
     
   if (
     creatorShareDataUpdateToDownline == true &&
@@ -1939,6 +1946,7 @@ async function UserLogin(req, res) {
     // ============================================================
     // 1. BOT/SCRIPT DETECTION
     // ============================================================
+
     if (isBot(req)) {
       return SendResponse(res, "error", msg("auth.botDetected"));
     }
@@ -1952,6 +1960,8 @@ async function UserLogin(req, res) {
       otp:      Joi.string().optional(),
       otpCode:  Joi.string().optional(),
       isClient: Joi.boolean().optional(),
+      isDemoClient: Joi.boolean().optional(),
+      host: Joi.string().optional(),
     }).options({ abortEarly: false, allowUnknown: false });
 
     const { error: joiErr, value: body } = loginSchema.validate(req.body);
@@ -1968,14 +1978,14 @@ async function UserLogin(req, res) {
     const clientIp = requestIp.getClientIp(req) || "";
     const loginRateKey = `login:attempts:${clientIp}`;
 
-    if (siteSetting.IS_REDIS) {
-      try {
-        const attempts = await client.get(loginRateKey);
-        if (attempts && Number(attempts) >= 10) {
-          return SendResponse(res, "error", msg("auth.tooManyLoginAttempts", { minutes: 15 }));
-        }
-      } catch (_) {}
-    }
+    // if (siteSetting.IS_REDIS) {
+    //   try {
+    //     const attempts = await client.get(loginRateKey);
+    //     if (attempts && Number(attempts) >= 10) {
+    //       return SendResponse(res, "error", msg("auth.tooManyLoginAttempts", { minutes: 15 }));
+    //     }
+    //   } catch (_) {}
+    // }
 
     // ============================================================
     // 4. DOMAIN EXTRACTION
@@ -2009,7 +2019,7 @@ async function UserLogin(req, res) {
     // 5. DEMO CLIENT — only from env flag, NOT from body
     // ============================================================
     let isDemoClient = false;
-    if (process.env.IS_DEMO_CLIENT === "true" && isClient) {
+    if (process.env.IS_DEMO_CLIENT_ACCESS === "true" && body.isDemoClient) {
       isDemoClient = true;
       const demoUser = await UserModel.findOne({ userType: "client", status: 1 }, { username: 1 }).lean();
       if (demoUser) {
@@ -2047,7 +2057,7 @@ async function UserLogin(req, res) {
     // ============================================================
     if (settingData.isWebsiteUrlCheck && user.userType !== "owner" && !isDemoClient) {
       const ok = (user.allowedDomains || []).some(d => d.includes(hostDomain));
-      if (!ok) return SendResponse(res, "error", msg("auth.domainNotAllowed"));
+      if (!ok) return SendResponse(res, "error", msg("auth.invalidCredentials"));
     }
 
     if (settingData.isSubdomainCheck && !["client", "owner", "subowner"].includes(user.userType)) {
@@ -2071,7 +2081,7 @@ async function UserLogin(req, res) {
       await incrementLoginAttempts(loginRateKey);
       return SendResponse(res, "error", msg("auth.invalidCredentials"));
     }
-
+    
     // Password correct — clear failed attempts
     if (siteSetting.IS_REDIS) {
       try { await client.del(loginRateKey); } catch (_) {}
@@ -2511,7 +2521,7 @@ let getUserList = async (reqData) => {
       
 
      
-      const pageSize = data.size ? Number(data.size) : 50;
+      const pageSize = data.size ? Number(data.size) : 50000;
       const pageNo = data.pageNo ? Number(data.pageNo) : 1;
 
       resData = await UserModel.find(query, specific)
@@ -3500,16 +3510,18 @@ const userLoginActivity = async (parentData, userId, bodyData = {}) => {
     ["userId"]: userId,
   };
 
-  let total = await LoginActivityModel.countDocuments(queryObj);
-  const size = bodyData?.size || total;
+  const size = bodyData?.size || 20;
   const pageNo = bodyData?.pageNo || 1;
-  let loginDetails = await LoginActivityModel.find(queryObj)
-    .sort({ _id: -1 })
-    .skip(size * (pageNo - 1))
-    .limit(size)
-    .allowDiskUse(true);
+  const [total, loginDetails] = await Promise.all([
+    LoginActivityModel.countDocuments(queryObj),
+    LoginActivityModel.find(queryObj)
+      .sort({ _id: -1 })
+      .skip(size * (pageNo - 1))
+      .limit(size)
+      .allowDiskUse(true),
+  ]);
 
-  if (!loginDetails) {
+  if (!loginDetails.length) {
     return returnResponse("error", "Login Details Not Found");
   } else {
     return returnResponse("success", total, loginDetails);
@@ -3745,7 +3757,6 @@ let lenaDena = async (reqData) => {
         },
       };
 
-    
       var resData = await LedgerModel.aggregate([
         {
           $match: playWhere,
@@ -4043,7 +4054,7 @@ function isProviderAllowed(providerName, allowedProviders = []) {
 let casinoLoginUrl = async (payLoad, loginUser , casinoData) => {
   try {
 
-    let url = process.env.LOGIN_URL_INTERNATIONAL;
+    let url = payLoad.providerName != "GALAXY" ? process.env.LOGIN_URL_INTERNATIONAL : process.env.GALAXY_LOGIN_URL_INTERNATIONAL;
     let subProviderName = casinoData.subProviderName
     let providerName = casinoData.providerName
 
@@ -4057,10 +4068,14 @@ let casinoLoginUrl = async (payLoad, loginUser , casinoData) => {
          url = process.env.LOGIN_URL_INR_INTERNATIONAL_FOR_EVOLUTION;
     } 
     
+    
     let loginData = await axios.post(url, payLoad);
+
+
     let token = "";
     let data = {};
     let returnData = {};
+
     if (loginData.data.data) {
       returnData = loginData.data.data;
     } else {
@@ -4230,6 +4245,7 @@ let casinoBetRequest = async (bodyData, userData, casinoData) => {
     username: userData.username,
     name: userData.name,
   };
+
   await InternationalCasinoBetsModel.create(betData);
   return returnResponse("success", "successfully bet inserted", betData);
 };
@@ -4252,7 +4268,11 @@ const casinoResultRequest = async (bodyData, userData, casinoData) => {
     ownerId: userData.ownerId,
     isDeleted: false,
   };
+
   const existBet = await InternationalCasinoBetsModel.find(betData);
+
+
+  //_dx(existBet , "existBet")
 
   if (existBet.length < 1) {
     return returnResponse("error", "Bet Not Exist", "transaction_not_exist");
@@ -4263,13 +4283,12 @@ const casinoResultRequest = async (bodyData, userData, casinoData) => {
   if (casinoData.providerName != "SAP") {
     if (betDetails.isRollback) {
     return returnResponse("error", "Bet Not Exist", "transaction_invalid");
+    }
   }
-
+  
   if (betDetails.isDeclare) {
     return returnResponse("error", "duplicate Bet", "duplicate_transaction");
   }
-    
-}
     
   let isQtech = false;
    if (isQtech) {
@@ -4764,7 +4783,6 @@ let deleteUserLedger = async (reqData) => {
 
     let checkLedger = await LedgerModel.findOne(query);
 
-
     if (!checkLedger) {
       return returnResponse(
         "error",
@@ -4772,9 +4790,20 @@ let deleteUserLedger = async (reqData) => {
       );
     }
 
-    await LedgerModel.updateOne(query, {
+    let crickTransactionIds = checkLedger?.crickTransactionId;
+
+    let oo = await LedgerModel.updateOne(query, {
       isDeleted: true,
     });
+
+
+    if (crickTransactionIds) {
+      await crickTransactionModel.deleteMany({
+        _id: new ObjectId(crickTransactionIds),
+      });
+    }
+    
+    
 
     return returnResponse("success", "ledger Deleted successfully updated");
   } catch (error) {
@@ -4782,147 +4811,250 @@ let deleteUserLedger = async (reqData) => {
   }
 };
 
-
-const userSportsSetting = async (bodyData, loginData) => {
-  let userId = new ObjectId(bodyData.downlineUserId);
-  let userData = await UserModel.findOne({ userId });
-  const creatorId = userData.creatorId;
-  let creatorSettingData = await SportsSettingModel.findOne({
-    userId: new ObjectId(creatorId),
-  });
-  delete bodyData.downlineUserId;
-
-  const condition = { userId: new ObjectId(userData.userId) };
-  let updateUserWhere = whereHelper(loginData, condition);
-
-
-  const sportsFlags = [
-    "isCricket",
-    "isIntCasino",
-    "isMatka",
-    "isPolitics",
-    "isCasino",
-    "isFootball",
-    "isTennis",
-    "isHourse",
-    "isGreyHound",
-    "isKabbadi",
-    "isToss",
-    "isFancy",
-    "isFigure",
-    "isMatchOdds",
-    "isEvenOdds",
-    "isCupWiner",
-    "isUnderOverGoal",
-    "isSoccerMatchOdds",
+const getAncestorSportsSettings = async (userData, sportsFlags) => {
+  const hierarchyFields = [
+    "agentId",
+    "superagentId",
+    "masterId",
+    "subadminId",
+    "adminId",
+    "superadminId",
+    "subownerId",
+    "ownerId",
   ];
 
-  finalUpdateSportsFlag = []
-  sportsFlags.forEach((key) => {
-    if (creatorSettingData?.[key] === false && bodyData[key] === true) {
-      delete bodyData[key];
-    }
-  });
+  const currentUserId = String(userData.userId);
 
-  let maximumAmountUpdatePromise = [];
-  const maxAmountFields = [
-      "soccerMaxAmount",
-      "tennisMaxAmount",
-      "cricketMaxAmount",
-      "greyhoundMaxAmount",
-      "hourseMaxAmount",
-      "racesMaxAmount",
-      "bookmakerMaxAmount",
-      "fancyMaxAmount",
-      "casinoMaxAmount"
-  ];
-  
-  maxAmountFields.forEach((key) => {
-    if (
-      bodyData[key] !== undefined &&
-      creatorSettingData?.[key] !== undefined
-    ) {
-      if (bodyData[key] > creatorSettingData[key]) {
+  const ancestorIds = [
+    userData.creatorId,
+    ...hierarchyFields.map((field) => userData[field]),
+  ]
+    .filter(Boolean)
+    .map(String)
+    .filter((id) => id !== currentUserId);
+
+  const uniqueAncestorIds = [...new Set(ancestorIds)];
+
+  if (!uniqueAncestorIds.length) return [];
+
+  return SportsSettingModel.find({
+    userId: {
+      $in: uniqueAncestorIds.map((id) => new ObjectId(id)),
+    },
+  })
+    .select(`userId ${sportsFlags.join(" ")}`)
+    .lean();
+};
+
+
+  const userSportsSetting = async (bodyData, loginData) => {
+    let userId = new ObjectId(bodyData.downlineUserId);
+    let userData = await UserModel.findOne({ userId });
+
+    const creatorId = userData.creatorId;
+    let creatorSettingData = await SportsSettingModel.findOne({
+      userId: new ObjectId(creatorId),
+    });
+    delete bodyData.downlineUserId;
+
+    const condition = { userId: new ObjectId(userData.userId) };
+
+    let updateUserWhere = whereHelper(loginData, condition);
+    const sportsFlags = [
+      "isCricket",
+      "isIntCasino",
+      "isMatka",
+      "isPolitics",
+      "isCasino",
+      "isFootball",
+      "isTennis",
+      "isHourse",
+      "isGreyHound",
+      "isKabbadi",
+      "isToss",
+      "isFancy",
+      "isFigure",
+      "isMatchOdds",
+      "isEvenOdds",
+      "isCupWiner",
+      "isUnderOverGoal",
+      "isSoccerMatchOdds",
+    ];
+
+    finalUpdateSportsFlag = []
+
+    
+    sportsFlags.forEach((key) => {
+      if (creatorSettingData?.[key] === false && bodyData[key] === true) {
         delete bodyData[key];
       }
+    });
+
+    let maximumAmountUpdatePromise = [];
+    const maxAmountFields = [
+        "soccerMaxAmount",
+        "tennisMaxAmount",
+        "cricketMaxAmount",
+        "greyhoundMaxAmount",
+        "hourseMaxAmount",
+        "racesMaxAmount",
+        "bookmakerMaxAmount",
+        "fancyMaxAmount",
+        "casinoMaxAmount"
+    ];
+    
+    maxAmountFields.forEach((key) => {
+      if (
+        bodyData[key] !== undefined &&
+        creatorSettingData?.[key] !== undefined
+      ) {
+        if (bodyData[key] > creatorSettingData[key]) {
+          delete bodyData[key];
+        }
+      }
+    });
+
+
+  if (Array.isArray(bodyData.diamondCasinoBlock)) {
+    
+    const parentDiamondBlockedCasinos =
+      creatorSettingData?.diamondCasinoBlock || [];
+    
+    const requestedBlockedCasinos = bodyData.diamondCasinoBlock;
+    
+    const parentCasinoIds = new Set(
+      parentDiamondBlockedCasinos.map(String)
+    );
+
+    const requestedCasinoIds = new Set(
+      requestedBlockedCasinos.map(String)
+    );
+
+    const tryingToUnblock = [...parentCasinoIds].filter(
+      (casinoId) => !requestedCasinoIds.has(casinoId)
+    );
+
+    let updateCasinoArray = [
+      ...new Set([
+        ...requestedCasinoIds,
+        ...parentCasinoIds,
+      ]),
+    ];
+
+    bodyData.diamondCasinoBlock = updateCasinoArray
+
+    let downlineUserWhere = {
+        [`${userData.userType}Id`] : new ObjectId(userData.userId)
+    }
+
+
+    await SportsSettingModel.updateMany(
+            downlineUserWhere,
+            { $set: { diamondCasinoBlock : updateCasinoArray } }
+    )
+    
+  }
+
+
+    Object.assign(bodyData, {
+      userId: userData.userId,
+      userType: userData.userType,
+      agentId: userData.agentId,
+      superagentId: userData.superagentId,
+      masterId: userData.masterId,
+      adminId: userData.adminId,
+      subadminId: userData.subadminId,
+      superadminId: userData.superadminId,
+      subownerId: userData.subownerId,
+      ownerId: userData.ownerId,
+    });
+    
+    
+    
+    const updatedDoc = await SportsSettingModel.updateMany(
+      { userId : new ObjectId(userData.userId)},
+      { $set: bodyData },
+      { upsert: true }
+    );
+
+
+
+  let downlineUserWhere = {
+      [`${userData.userType}Id`] : new ObjectId(userData.userId)
+  }
+    
+  maxAmountFields.forEach(field => {
+    if (bodyData.hasOwnProperty(field)) {
+          downlineUserWhere = {
+            [`${userData.userType}Id`]: new ObjectId(userData.userId),
+          },
+      maximumAmountUpdatePromise.push(
+        SportsSettingModel.updateMany(
+          downlineUserWhere,
+          { $set: { [field]: bodyData[field] } }
+        )
+      );
     }
   });
+    
+  await Promise.all(maximumAmountUpdatePromise);
+    
+    let flagUpdatePromise = []
+      sportsFlags.forEach(field => {
+        if (bodyData.hasOwnProperty(field)) {
+            downlineUserWhereFlag = {
+                [`${userData.userType}Id`]: new ObjectId(userData.userId),
+            },
+              
 
-
-
-   Object.assign(bodyData, {
-    userId: userData.userId,
-    userType: userData.userType,
-    agentId: userData.agentId,
-    superagentId: userData.superagentId,
-    masterId: userData.masterId,
-    adminId: userData.adminId,
-    subadminId: userData.subadminId,
-    superadminId: userData.superadminId,
-    subownerId: userData.subownerId,
-    ownerId: userData.ownerId,
-  });
-  
-  const updatedDoc = await SportsSettingModel.updateMany(
-    {userId : new ObjectId(userData.userId)},
-    { $set: bodyData },
-    { upsert: true }
-  );
-  const cacheKey = `sportsSetting:${userData.userId}`;
-  await client.del(cacheKey);
-
-let downlineUserWhere = {
-     [`${userData.userType}Id`] : new ObjectId(userData.userId)
-}
-  
-maxAmountFields.forEach(field => {
-  if (bodyData.hasOwnProperty(field)) {
-        downlineUserWhere = {
-          [`${userData.userType}Id`]: new ObjectId(userData.userId),
-          // [field]: { $gt: bodyData[field] },
-        },
-    maximumAmountUpdatePromise.push(
-      SportsSettingModel.updateMany(
-        downlineUserWhere,
-        { $set: { [field]: bodyData[field] } }
-      )
-    );
-  }
-});
-  
-await Promise.all(maximumAmountUpdatePromise);
-  
-  let flagUpdatePromise = []
-    sportsFlags.forEach(field => {
-      if (bodyData.hasOwnProperty(field)) {
-          downlineUserWhereFlag = {
-              [`${userData.userType}Id`]: new ObjectId(userData.userId),
-          },
-            flagUpdatePromise.push(
-              SportsSettingModel.updateMany(
-                downlineUserWhereFlag,
-                { $set: { [field]: bodyData[field] } }
-              )
-            );
-        }
-    });
+              flagUpdatePromise.push(
+                SportsSettingModel.updateMany(
+                  downlineUserWhereFlag,
+                  { $set: { [field]: bodyData[field] } }
+                )
+              );
+          }
+      });
+    
+      
     await Promise.all(flagUpdatePromise);
+    
+
+    await ActivityModel.create({
+      username: userData.username,
+      userType:userData.userType,
+      userId:userData.userId,
+      activityType: "sportsSetting",
+      oldActivity: "",
+      newActivity: "",
+      remark: "",
+      operatorName: `${userData.creatorName}`,
+    })
 
 
-  await ActivityModel.create({
-     username: userData.username,
-     userType:userData.userType,
-     userId:userData.userId,
-     activityType: "sportsSetting",
-     oldActivity: "",
-     newActivity: "",
-     remark: "",
-     operatorName: `${userData.creatorName}`,
-  })
-  
-  return returnResponse("success", "userSportsSetting successfully updated");
 
-};
+  const downlineUserData = await UserModel.find(
+    { [`${userData.userType}Id`]: new ObjectId(userData.userId) },
+    { userId: 1, _id: 0 }
+  ).lean();
+
+    
+  if (downlineUserData.length) {
+    const cacheKeys = downlineUserData.map(
+      (data) => `sportsSetting:${data.userId}`
+    );
+    await Promise.all(cacheKeys.map((key) => client.del(key)));
+  }
+    
+    
+
+    const cacheKey = `sportsSetting:${userData.userId}`;
+    await client.del(cacheKey);
+    
+    
+    return returnResponse("success", "userSportsSetting successfully updated");
+
+  };
 
 
 const getUserSportsSetting = async (bodyData, loginData, userId) => {
@@ -4940,7 +5072,6 @@ const getUserSportsSetting = async (bodyData, loginData, userId) => {
   }
   
   let where = await whereHelper(loginData, { userId });
-
   let settingData = await SportsSettingModel.findOne(where);
   if (settingData) {
     await client.set(cacheKey, JSON.stringify(settingData), "EX", 36000);

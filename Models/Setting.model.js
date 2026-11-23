@@ -1,4 +1,3 @@
-const { boolean } = require("joi");
 const mongoose = require("mongoose");
 
 const SettingSchema = new mongoose.Schema(
@@ -300,6 +299,10 @@ const SettingSchema = new mongoose.Schema(
       default: true,
     },
     isBetFairRedis: {
+      type: Boolean,
+      default: true,
+    },
+     isOwnSocket: {
       type: Boolean,
       default: true,
     },

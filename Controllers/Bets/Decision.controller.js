@@ -3,7 +3,7 @@ const moment = require("moment");
 const { ObjectId } = require("mongodb");
 const fs = require("fs");
 const axios = require("axios");
-const {emitToUser , emitToMultipleUsers } =  require("../../socket.js")
+const { emitToMultipleUsers } =  require("../../socket.js")
 const { SendResponse } = require("../../Helpers/ResponseMapper");
 const {
   updateBulkCoinsExposureUserByMarketId,
@@ -88,13 +88,49 @@ const sessionDecision = async (req, res) => {
   try {
 
     let fancyName = "";
-
     let matchData = await sportList.findOne({ marketId: marketId });
-
     let databaseFancyData = await fancyListModel.findOne({
       marketId: marketId,
       selectionId: selectionId,
     });
+
+    let isRollback = false;
+    let oldResults = databaseFancyData && databaseFancyData.oldResults ? databaseFancyData.oldResults : []
+    if (databaseFancyData) {
+      if (databaseFancyData.isDeclare) {
+        isRollback = true;
+      }
+      oldResults.push({
+        decisionRun: databaseFancyData.decisionRun,
+        time: new Date().getTime(),
+      });
+    }
+
+
+    let rollBackPerByPassword = process.env.SESSION_PER_BY_PASSWORD === "true" ? true : false;
+    
+    if (rollBackPerByPassword && isRollback) {
+       if (!bodyData.password) {
+          return SendResponse(
+            res,
+            "error",
+            "decision repeat password is required please try again later",
+            {
+              isPasswordRequired: true,
+            }
+          );
+       }
+      
+       let BETS_DECISON_REPEAT_PASSWORD = process.env.BETS_DECISON_REPEAT_PASSWORD
+        if (bodyData.password != BETS_DECISON_REPEAT_PASSWORD) {
+          return SendResponse(
+            res,
+            "error",
+            "bets decision repeat password is wrong please try again later"
+          );
+        }
+    }
+
 
     let sessionWhere = {
       marketId: marketId,
@@ -110,10 +146,16 @@ const sessionDecision = async (req, res) => {
       }
     }
 
+
+    //sessionWhere.userId = new ObjectId("6aad1dc729c980aed7cbd283")
+    
+
+
     const sessionBetList = await BetService.getFancyBetList(sessionWhere);
     let sessionLength = sessionBetList.length
 
 
+  
     await caclculateTime(startTime, "sessionBetList")
 
     if (sessionBetList.length < 1) {
@@ -614,16 +656,13 @@ const sessionDecision = async (req, res) => {
         await StatementModel.insertMany(statementChunk);
       }
     }
-
-   
-      let crickTransactionChunks = chunkArrayNew(crickInsertTransactionLog, 1000);
-      for (const crickTransactionChunk of crickTransactionChunks) {
-        await CrickTransactionLogModel.insertMany(crickTransactionChunk);
-      }
     
-
-
-
+   
+    let crickTransactionChunks = chunkArrayNew(crickInsertTransactionLog, 1000);
+    for (const crickTransactionChunk of crickTransactionChunks) {
+        await CrickTransactionLogModel.insertMany(crickTransactionChunk);
+    }
+    
     let updateWhere = { marketId: marketId, selectionId: selectionId }
     if (bodyData.gtype && bodyData.gtype == "cricketcasino") {
       updateWhere = {
@@ -635,17 +674,7 @@ const sessionDecision = async (req, res) => {
     }
 
 
-    let isRollback = false;
-    let oldResults = databaseFancyData && databaseFancyData.oldResults ? databaseFancyData.oldResults : []
-    if (databaseFancyData) {
-      if (databaseFancyData.isDeclare) {
-        isRollback = true;
-      }
-      oldResults.push({
-        decisionRun: databaseFancyData.decisionRun,
-        time: new Date().getTime(),
-      });
-    }
+   
 
     let updateFancyData = {
       marketId: marketId,
@@ -1060,6 +1089,7 @@ const oddsDecision = async (req, res) => {
   const JoiSchema = Joi.object({
     marketId: Joi.string().required(),
     decisionSelectionId: Joi.string().required(),
+
   }).options({ abortEarly: false, allowUnknown: true });
   const { error } = JoiSchema.validate(bodyData);
   if (error) {
@@ -1071,6 +1101,14 @@ const oddsDecision = async (req, res) => {
     }
   }
   let isToss = false;
+  let decisionSelectionIdArray = []
+  if (bodyData.decisionSelectionIdArray) {
+    decisionSelectionIdArray = bodyData.decisionSelectionIdArray
+  }
+
+
+
+
   if (bodyData.isToss) {
     isToss = true;
     bodyData.decisionSelectionId = bodyData.decisionSelectionId * 10000;
@@ -1221,8 +1259,11 @@ const oddsDecision = async (req, res) => {
       oddsType,
       decisionSelectionId,
       "",
-      wonTeamName
+      wonTeamName,
+      decisionSelectionIdArray
     );
+
+    //_d(decisionOdds , "decisionOdds")
 
     await caclculateTime(startTime, "oddsDecision end")
 
@@ -4651,6 +4692,7 @@ const betsDelete = async (req, res) => {
   }
 
   let BETS_DELETE_PASSWORD = process.env.BETS_DELETE_PASSWORD
+  
   if (userData.userType == "subowner") {
     BETS_DELETE_PASSWORD = process.env.SUBOWNER_BETS_DELETE_PASSWORD ? process.env.SUBOWNER_BETS_DELETE_PASSWORD : process.env.BETS_DELETE_PASSWORD
   }
@@ -5831,6 +5873,7 @@ const manualBetfairDecision = async (req, res) => {
       marketId: Joi.string().required(),
       betfairMarketId: Joi.string().required(),
       decisionSelectionId: Joi.string().required(),
+      decisionSelectionIdArray: Joi.array().optional(),
     }).options({ abortEarly: false, allowUnknown: true });
 
     const { error } = JoiSchema.validate(bodyData);
@@ -5838,7 +5881,9 @@ const manualBetfairDecision = async (req, res) => {
       const errorMessages = error.details.map((detail) => detail.message);
       return SendResponse(res, "error", "Failed In validation", errorMessages);
     }
+
     let matchData = await sportList.findOne({ marketId: bodyData.marketId });
+
     if (!matchData) {
       return SendResponse(res, "error", "sport not found");
     }
@@ -5846,11 +5891,20 @@ const manualBetfairDecision = async (req, res) => {
       marketId: bodyData.betfairMarketId
     })
     let decisionSelectionId = bodyData.decisionSelectionId;
+
+    let decisionSelectionIdArray = []
+    if (bodyData.decisionSelectionIdArray) {
+      decisionSelectionIdArray = bodyData.decisionSelectionIdArray
+    }
+    
+
     await DecisionService.oddsDecision(
       matchData,
       "",
       decisionSelectionId,
-      bodyData.betfairMarketId
+      bodyData.betfairMarketId,
+      "",
+      decisionSelectionIdArray
     );
     return SendResponse(res, "success", "decision done successfully");
   } catch (error) {

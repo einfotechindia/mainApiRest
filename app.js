@@ -1,3 +1,10 @@
+// suppress url.parse() deprecation from bcrypt/@mapbox/node-pre-gyp (node_modules internal)
+const originalEmitWarning = process.emitWarning;
+process.emitWarning = (warning, ...args) => {
+  if (typeof warning === 'string' && warning.includes('url.parse()')) return;
+  return originalEmitWarning.call(process, warning, ...args);
+};
+
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
@@ -20,6 +27,32 @@ const healthRoutes = require('./DDOS/healthCheck');
 
 
 app.set('trust proxy', 1);
+
+// ============================================================
+// CLOUDFLARE IP RESOLVER — must be first (sets req.realIP)
+// ============================================================
+const cloudflareIPResolver = require("./DDOS/cloudflareIPResolver");
+app.use(cloudflareIPResolver);
+
+// ============================================================
+// BYPASS IPS — skip ALL security checks for whitelisted IPs
+// ============================================================
+const requestIp = require("request-ip");
+const BYPASS_IPS = new Set(
+  (process.env.BYPASS_IPS || "").split(",").map(ip => ip.trim()).filter(Boolean)
+);
+
+app.use((req, res, next) => {
+  // Priority: req.realIP (Cloudflare resolved) → cf-connecting-ip → requestIp → raw
+  const ip = req.realIP
+    || req.headers["cf-connecting-ip"]
+    || requestIp.getClientIp(req)
+    || "";
+  const cleanIp = ip.replace(/^::ffff:/, "");
+  req.clientIp = cleanIp;
+  req.isBypassed = BYPASS_IPS.has(ip) || BYPASS_IPS.has(cleanIp);
+  next();
+});
 
 app.use((req, res, next) => {
   const rid = req.headers['x-request-id'] || crypto.randomUUID();
@@ -98,6 +131,8 @@ app.use(express.static(path.join(__dirname, "public"), {
   maxAge: '1d',
   etag: true
 }));
+// TalksTry webhook / file upload / send — raw body chahiye, isliye express.json se pehle
+app.use("/v1/talkstry", require("./Routes/Talkstry/Talkstry.route").rawRouter);
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(decruptPayload);
@@ -161,6 +196,8 @@ const centerPanelRoutes = require("./Routes/CenterPanel/CenterPanel.route");
 const radheRoutes = require("./Routes/radhe.route");
 const fancyManagerRoutes = require("./Routes/FancyManager/FancyManager.route");
 const bethubRoutes = require("./Routes/bethub.route");
+const gameSportsSettingRoutes = require("./Routes/GameSportsSetting/gameSportsSetting.route");
+const { resumePendingCascades } = require("./Services/GameSportsSetting/gameSportsSetting.service");
 const cronRoutes = require("./Routes/cron.route");
 
 app.use("/v1/user", UserRoutes);
@@ -185,6 +222,7 @@ app.use("/v1/cloudflare", cloudflareRoutes);
 app.use("/v1/operating", operatingRoutes);
 app.use("/v1/cp", centerPanelRoutes);
 app.use("/v1/fancyManager", fancyManagerRoutes);
+app.use("/v1/gameSportsSetting", gameSportsSettingRoutes);
 // website According Routes
 app.use("/v1/bluexchReports", bluexchReports);
 app.use("/v1/bsfReports", bsfReports);
@@ -195,6 +233,7 @@ app.use("/v1/halkabhari", halkabhariRoutes);
 app.use("/v1/diamond", diamondRoutes);
 app.use("/v1/radhe", radheRoutes);
 app.use("/v1/bethub", bethubRoutes);
+app.use("/v1/talkstry", require("./Routes/Talkstry/Talkstry.route"));
 
 // cronRoute
 app.use("/v2/cron", cronRoutes);
@@ -237,6 +276,8 @@ const PORT = process.env.PORT || 5001;
   try {
     await db.initialize();
     initializeSocket(server);
+    // gameSportsSetting : downline update jo restart ke time adhura reh gaya tha use poora karo
+    resumePendingCascades();
 
     server.listen(PORT, (error) => {
       if (!error) {

@@ -13,7 +13,9 @@ const {
   _date_time,
   chunkArrayNew,
   getSettingData,
-  gameBetValidaterRedis
+  gameBetValidaterRedis,
+  _d,
+  _dx
 } = require("./CommonHelper");
 const { InsertUserStatement } = require("./StatementHelper");
 const { returnResponse } = require("../Helpers/ResponseMapper");
@@ -59,6 +61,10 @@ const UpdateUserCoins = async (
     // 1. BASIC VALIDATION
     // ============================================================
 
+    if (parentData && parentData[0]) {
+      parentData = parentData[0]
+    }
+   
     if (!Number.isFinite(transactionAmount) || transactionAmount === 0) {
       return returnResponse("error", msg("transaction.invalidAmount"));
     }
@@ -147,9 +153,7 @@ const UpdateUserCoins = async (
       return returnResponse("error", msg("transaction.creatorInactive"));
     }
 
-    if (String(creatorData._id) !== String(parentData.userId)) {
-      return returnResponse("error", msg("transaction.unauthorizedHierarchy"));
-    }
+  
 
     // ============================================================
     // 4. TRANSACTION PASSWORD
@@ -317,6 +321,7 @@ const UpdateUserCoins = async (
         ),
       ]);
 
+ 
       const creatorTxId = session ? creatorTransaction[0]._id : creatorTransaction._id;
       const userTxId = session ? userTransaction[0]._id : userTransaction._id;
       returnData.creatorTransactionId = creatorTxId;

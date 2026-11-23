@@ -8,8 +8,6 @@ const {
     checkUserPassword,
   } = require("../Helpers/UsersUtils");
   const { ObjectId } = require("mongodb");
-  const Joi = require("joi");
-  const { siteSetting } = require("../Common/Constants");
   const {
     _dx,
     whereHelper,
@@ -152,7 +150,7 @@ const processUser = async (userDoc, loginData , bodyData) => {
     };
 
     const createdUser = await UserCreate(insertData, loginData);
-    _d("User created:", createdUser);
+    //"User created:", createdUser);
   } catch (error) {
     console.error("Error creating user:", error.message);
   }

@@ -1323,7 +1323,10 @@ const bsfCollectionReport = async (req, res) => {
     bodyData.creatorId
   );
 
-  let query = {};
+  let query = {
+    isDeleted : 0
+  };
+
   if (bodyData.marketId) {
     query.marketId = bodyData.marketId;
   }
@@ -1344,6 +1347,7 @@ const bsfCollectionReport = async (req, res) => {
     },
   ]);
 
+  
   let finalReturnData = [];
   let userNameData = {};
   let convertData = convertKeyObjectAndSeperateid(resData, "_id");
@@ -1351,15 +1355,56 @@ const bsfCollectionReport = async (req, res) => {
     userNameData = convertData.returnDataObject;
   }
   userList = JSON.parse(JSON.stringify(userList));
+
+
+
+  let lena = []
+  let dena = []
+  let clear = []
+
+
   Object.entries(userList).forEach(([userId, userValue]) => {
     let ledgerAmount = 0;
+    let lenaAmount = 0;
+    let denaAmount = 0;
     if (userNameData[userId]) {
       ledgerAmount = userNameData[userId].totalAmount;
     }
-    userValue.totalAmount = ledgerAmount;
+
+    if(userValue.userType == "client" && ledgerAmount > 0){
+      denaAmount = ledgerAmount;
+    }else if(userValue.userType == "client" && ledgerAmount < 0){
+      lenaAmount = ledgerAmount;
+    }else if(userValue.userType != "client" && ledgerAmount > 0){
+      lenaAmount = ledgerAmount;
+    }else if(userValue.userType != "client" && ledgerAmount < 0){
+      denaAmount = ledgerAmount;
+    }     
+
+    userValue.totalAmount = ledgerAmount
+    
+    if (lenaAmount != 0) {
+      lena.push(userValue)
+    }
+
+    if (denaAmount != 0) {
+      dena.push(userValue)
+    }
+
+    if (userValue.totalAmount == 0) {
+      clear.push(userValue)
+    }
+    
     finalReturnData.push(userValue);
+
   });
-  return SendResponse(res, "success", "dataFetched", finalReturnData);
+
+
+  return SendResponse(res, "success", "dataFetched", {
+    lena,
+    dena,
+    clear,
+  });
 };
 
 const bsfClientReport = async (req, res) => {
@@ -1538,7 +1583,11 @@ const matchDetails = async (req, res) => {
     marketId: bodyData.marketId,
   });
   let returnObj = {};
+
+
   returnObj.usersCount = await playModel.countDocuments(whereQuery);
+
+
 
   var fancyResData = await FancyBetModel.aggregate([
     {
@@ -1548,6 +1597,7 @@ const matchDetails = async (req, res) => {
       $group: {
         _id: `$marketId`,
         totalFancyBetAmount: { $sum: "$amount" },
+        profitLossAmount: { $sum: "$profitLossAmount" },
         totalResultsBets: {
           $sum: {
             $cond: [
@@ -1563,7 +1613,7 @@ const matchDetails = async (req, res) => {
           $sum: {
             $cond: [
               {
-                $and: [{ $eq: ["$isDeleted", "1"] }],
+                $and: [{ $eq: ["$isDeleted", true] }],
               },
               1,
               0,
@@ -2812,6 +2862,194 @@ const completedEventsNew = async (req, res) => {
 
 
 
+const getBsfLedger = async (req, res) => {
+  try {
+    const { body, loggedInUser } = req;
+    let userType = loggedInUser.userType;
+    const userWhere = await whereHelper(loggedInUser);
+    let userId = new ObjectId(loggedInUser.userId);
+
+    // Date Filter
+    if (body.fromDate && body.toDate) {
+      userWhere.date = await dateWhereCond(body.fromDate, body.toDate);
+    }
+
+
+    // User Filter
+    if (body.userId && body.userType) {
+      userWhere.userId= new ObjectId(body.userId);
+      userType = body.userType
+      userId = new ObjectId(body.userId)
+    }
+
+    if (body.isMatchProfitLoss && body.isMatchProfitLoss == true) {
+       userWhere.gameName = "sports"
+    }
+
+     if (body.iscasinoProfitLoss && body.iscasinoProfitLoss == true) {
+       userWhere.gameName = "casino"
+    }
+
+    let userData = await UserModel.findOne({ _id: userId })
+    userWhere.isDeleted =  0 
+
+    const profitLossPipeline = [
+      {
+        $match: userWhere,
+      },
+      {
+        $group: {
+          _id: `$userId`,
+          ledgerAmount: {
+            $sum: `$amount`,
+          },
+        },
+      },
+      {
+        $sort: {
+          createdAt: -1,
+        },
+      },
+    ];
+
+    var cricRes = await userLedger.aggregate(profitLossPipeline);
+
+    cricRes[0].ledgerAmount = userData.userType == "client" ? cricRes[0].ledgerAmount : -1 * cricRes[0].ledgerAmount
+
+
+    return SendResponse(res, "success", "", cricRes);
+
+  } catch (error) {
+    console.error("bsfProfitLoss Error:", error);
+    return SendResponse(res, "Something went wrong", true);
+  }
+};
+
+
+
+const matchDetailsSummary = async (req, res) => {
+  const loginData = req.loggedInUser;
+  const bodyData = req.body;
+  let userType = loginData.userType
+  let userId = loginData.userId
+
+  if (!bodyData.marketId) {
+    return SendResponse(res, "error", "market Id Is Required");
+  }
+
+  if (bodyData.userType && bodyData.userId) {
+      userType = bodyData.userType
+      userId = bodyData.userId
+  }
+
+  if (bodyData.username && bodyData.username != "") {
+    let usernameData = await UserUtils.getUserIdByUsername(bodyData.username)
+    if (usernameData.userDetails && usernameData.status == "success") {
+        userType = usernameData?.userDetails?.userType
+        userId = new ObjectId(usernameData?.userDetails?.userId)
+    }
+  }
+
+
+  let whereQuery = {
+    [`${userType}Id`] : new ObjectId(userId),
+    marketId: bodyData.marketId,
+  }
+
+  whereQuery = await whereHelper(loginData,whereQuery);
+  
+  let nonDeltedWhere = { ...whereQuery, ...{ isDeleted: 0 } }
+  let deletedWhereQuery = { ...whereQuery, ...{ isDeleted: 1 } }
+  
+
+  let returnObj = {};
+
+ 
+  let crickGroup = {
+              _id: "$marketId",
+              totalProfitLossMatch: { $sum: `$${userType + "ProfitLoss"}` },
+              totalClientProfitLossMatch: { $sum: `$amount` },
+            matchCommissionProfitLoss:  {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [{ $eq: ["$transactionType", "profitLoss"] } , { $eq: ["$isComm", 1] }  , { $eq: ["$marketType", "odds"] }],
+                      },
+                      `$${userType}ProfitLoss`,
+                      0,
+                    ],
+                  },
+              },
+              fancyCommissionProfitLoss:  {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [{ $eq: ["$transactionType", "profitLoss"] } , { $eq: ["$isComm", 1] }  , { $eq: ["$marketType", "fancy"] }],
+                      },
+                      `$${userType}ProfitLoss`,
+                      0,
+                    ],
+                  },
+              },
+              marketProfitLoss:  {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [{ $eq: ["$transactionType", "profitLoss"] } , { $eq: ["$betFor", "market"] }],
+                      },
+                      `$${userType}ProfitLoss`,
+                      0,
+                    ],
+                  },
+                 },
+                fancyProfitLoss:  {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [{ $eq: ["$transactionType", "profitLoss"] } , { $eq: ["$marketType", "fancy"] }],
+                      },
+                      `$${userType}ProfitLoss`,
+                      0,
+                    ],
+                  },
+              },
+  }
+  
+          let userData = {
+            userType,
+            userId
+          }
+  
+        let [ userCount , totalFancyBets , deletedTotalFancyBets, totalOddsBets , deletedTotalOddsBets , cricRes , oddsPositionData] = await Promise.all([
+          playModel.countDocuments(whereQuery),
+          FancyBetModel.countDocuments(nonDeltedWhere),
+          FancyBetModel.countDocuments(deletedWhereQuery),
+          BetModel.countDocuments(nonDeltedWhere),
+          BetModel.countDocuments(deletedWhereQuery),
+          CrickTransactionLogModel.aggregate([
+                {
+                  $match: whereQuery,
+                },
+                {
+                  $group: crickGroup
+                },
+          ]),
+          getOddsPositionByMarketWise(userData, bodyData.marketId),
+        ])
+
+  
+  returnObj = {
+    userCount,
+    totalFancyBets,
+    deletedTotalFancyBets,
+    totalOddsBets,
+    deletedTotalOddsBets,
+    cricRes,
+    oddsPositionData
+  };
+
+  return SendResponse(res, "success", "dataFetched", returnObj);
+};
 
 
 module.exports = {
@@ -2847,5 +3085,7 @@ module.exports = {
   userOrMarketWiseCricReport,
   selfStatementCrick,
   bsfProfitLoss,
-  completedEventsNew
+  completedEventsNew,
+  getBsfLedger,
+  matchDetailsSummary
 };

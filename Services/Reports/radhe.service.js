@@ -1,11 +1,6 @@
 const UserModel = require("../../Models/User/User.model");
 const { ObjectId } = require("mongodb");
-const profitLossPosition = require("../../Models/BetsList/profitLossPosition.model");
-const fancyBetListModel = require("../../Models/BetsList/FancyBetsList.model");
-const oddsBetListModel = require("../../Models/BetsList/OddsBetsList.model");
 const crickTransaction = require("../../Models/crickTransaction.model");
-const LedgerModel = require("../../Models/Ledger.model");
-const { UserTypes } = require("../../Common/Constants");
 const { SendResponse } = require("../../Helpers/ResponseMapper");
 const {
   _dx,
@@ -20,9 +15,6 @@ const {
 const {
   gettingDirectUserByUserId,
 } = require("../../Helpers/UsersUtils");
-const BetModel = require("../../Models/BetsList/OddsBetsList.model");
-const OddsPositionModel = require("../../Models/BetsList/OddsPosition.model");
-const BetService = require("../../Services/Sports/Bet.service");
 const CrickTransactionLogModel = require("../../Models/crickTransaction.model");
 
 
@@ -604,14 +596,21 @@ const sportWiseFilterData = async (req, res) => {
     const userLedgerField = `${userType}LedgerAmount`;
 
     let matchFilter = whereHelper(loginData);
+
+    if (bodyData.userId && bodyData.userType) {
+      matchFilter[`${bodyData.userType}Id`] = new ObjectId(bodyData.userId);
+    }
+
+
     matchFilter.transactionType = "profitLoss";
     matchFilter.date = dateFilter;
-      matchFilter.gameName = "sports"
+    matchFilter.gameName = "sports"
       
       if (bodyData.gameType && bodyData.gameType != null && bodyData.gameType!="all") {
         matchFilter.gameType = bodyData.gameType
       }
     
+   // _d(matchFilter , "matchFilter")
 
     // Top Games by volume
     const sportTypeFilterData = await CrickTransactionLogModel.aggregate([
@@ -647,36 +646,42 @@ const casinoWiseFilterData = async (req, res) => {
   try {
     const bodyData = req.body;
     const loginData = req.loggedInUser;
-    const userType = loginData.userType;
-    const userId = loginData.userId || loginData._id;
+    let userType = loginData.userType;
+    let userId = loginData.userId || loginData._id;
+    let matchFilter = whereHelper(loginData);
+    if (bodyData.fromDate && bodyData.toDate) {
+        const fromDate = bodyData.fromDate || null;
+        const toDate = bodyData.toDate || null;
+        matchFilter.date = await dateWhereCond(fromDate, toDate);
+    }
 
-    const fromDate = bodyData.fromDate || null;
-    const toDate = bodyData.toDate || null;
+  
 
-    const dateFilter = await dateWhereCond(fromDate, toDate);
+    if (bodyData.userId && bodyData.userType) {
+      matchFilter[`${bodyData.userType}Id`] = new ObjectId(bodyData.userId);
+      userType = bodyData.userType;
+    }
 
     const userProfitLossField = `${userType}ProfitLoss`;
     const userLedgerField = `${userType}LedgerAmount`;
-
-    let matchFilter = whereHelper(loginData);
+    
     matchFilter.transactionType = "profitLoss";
-    matchFilter.date = dateFilter;
-      matchFilter.gameName = "casino"
+    matchFilter.gameName = "casino"
       
-      if (bodyData.gameType && bodyData.gameType != null && bodyData.gameType!="all") {
+    if (bodyData.gameType && bodyData.gameType != null && bodyData.gameType!="all") {
         matchFilter.gameType = bodyData.gameType
-      }
+    }
     
 
     // Top Games by volume
     const sportTypeFilterData = await CrickTransactionLogModel.aggregate([
       { $match: matchFilter },
       {
-        $group: {
+        $group: { 
           _id: "$gameType",
           eventName: { $first: "$eventName" },
           totalBets: { $sum: 1 },
-          totalClientProfitLoss: { $sum: "$clientProfitLoss" },
+          totalClientProfitLoss: { $sum: "$amount" },
           totalUserProfitLoss: { $sum: `$${userProfitLossField}` },
           totalUserLedger: { $sum: `$${userLedgerField}` },
         },
@@ -685,7 +690,7 @@ const casinoWiseFilterData = async (req, res) => {
       { $limit: 20 },
     ]);
 
-    
+
     const responseData = {
       sportTypeFilterData
     };
@@ -696,8 +701,6 @@ const casinoWiseFilterData = async (req, res) => {
     return SendResponse(res, "error", "Something went wrong", error.message);
   }
 };
-
-
 
 const dashboardProfitLoss = async (req, res) => {
   try {
@@ -802,7 +805,6 @@ const dashboardProfitLoss = async (req, res) => {
     return SendResponse(res, "error", "Something went wrong", error.message);
   }
 };
-
 
 
 module.exports = {

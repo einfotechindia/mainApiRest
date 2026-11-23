@@ -23,6 +23,9 @@ const BLOCKED_UA_PATTERNS = [
  * Missing UA / known bot UA / missing accept/accept-language = blocked
  */
 function isBot(req) {
+  // Bypass whitelisted IPs (set by app.js middleware)
+  if (req.isBypassed) return false;
+
   const ua = req.headers["user-agent"] || "";
 
   if (!ua || ua.length < 10) return true;
@@ -44,6 +47,8 @@ function isBot(req) {
  * score >= 3 = likely bot
  */
 function isLikelyBot(req) {
+  if (req.isBypassed) return false;
+
   const headers = req.headers || {};
   const ua = headers["user-agent"] || "";
   let score = 0;
@@ -84,6 +89,7 @@ function isLikelyBot(req) {
   // Sec-Fetch headers — real browsers send these
   if (!headers["sec-fetch-site"] && !headers["sec-fetch-mode"]) score++;
 
+  
   return score >= 3;
 }
 

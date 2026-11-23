@@ -6,10 +6,19 @@ const {
 const router = express.Router();
 const websiteController = require("../../Controllers/Bets/Website.controller");
 
+const longTimeout = (req, res, next) => {
+  req.setTimeout(600000); // 10 min
+  res.setTimeout(600000);
+  next();
+};
+
+
+
 router.post("/createDomain", verifyToken, isOwnerAndStaff, websiteController.createDomain);
 router.post("/DomainList", verifyToken, websiteController.DomainList);
 router.post("/deleteDomain", verifyToken,isOwnerAndStaff, websiteController.deleteDomain);
 router.post("/updateDomain", verifyToken, websiteController.updateDomain);
+
 router.post(
   "/checkDuplicateFancy",
   verifyToken,
@@ -43,6 +52,9 @@ router.post(
 
 router.post("/depositReq", verifyToken, websiteController.depositReq);
 router.post("/withdrawReq", verifyToken, websiteController.withdrawReq);
+router.post("/cancelWithdrawReqByclient", verifyToken, websiteController.cancelWithdrawReqByclient);
+
+
 router.post(
   "/approveDisapproveReq",
   verifyToken,
@@ -93,7 +105,6 @@ router.post(`/view`, verifyToken, websiteController.view);
 router.post(
   `/checkExposureClient`,
   verifyToken,
-  isOwnerAndStaff,
   websiteController.checkExposureClient
 );
 
@@ -353,8 +364,9 @@ router.post(`/sameBetsAtSameTime`, verifyToken, websiteController.sameBetsAtSame
 
 router.post(`/removeDuplicateUsersAndGetReport`, verifyToken, websiteController.removeDuplicateUsersAndGetReport);
 
-
 router.post(`/userExposureList`, verifyToken, isOwnerAndStaff, websiteController.userExposureList);
+
+router.post(`/notificationList`, verifyToken, websiteController.notificationList);
 
 
 // router.post(
@@ -363,8 +375,6 @@ router.post(`/userExposureList`, verifyToken, isOwnerAndStaff, websiteController
 //   isOwnerAndStaff,
 //   websiteController.fanctCateogeryCrud
 // );
-
-
 
 // without verification routes
 
@@ -447,12 +457,24 @@ router.post(
 router.post(`/createFancyCateogeory`, verifyToken, isOwnerAndStaff, websiteController.createFancyCateogeory);
 router.post(`/updateFancyCateogeory`, verifyToken, isOwnerAndStaff, websiteController.updateFancyCateogeory);
 router.post(`/deleteFancyCateogeory`, verifyToken, isOwnerAndStaff, websiteController.deleteFancyCateogeory);
-router.post(`/getFancyCateogeoryList`, verifyToken, websiteController.getFancyCateogeoryList);
 router.post(`/updateFancyCateogeoryStatus`, verifyToken, isOwnerAndStaff, websiteController.updateFancyCateogeoryStatus);
 router.post(`/bulkUpdateFancyCateogeory`, verifyToken, isOwnerAndStaff, websiteController.bulkUpdateFancyCateogeory);
-router.post(`/exportFancyCateogeory`, verifyToken, websiteController.exportFancyCateogeory);
 router.post(`/importFancyCateogeory`, verifyToken, isOwnerAndStaff, websiteController.importFancyCateogeory);
 router.post(`/getFancyCateogeoryAuditLog`, verifyToken, isOwnerAndStaff, websiteController.getFancyCateogeoryAuditLog);
+router.post(`/getFancyCateogeoryList`, verifyToken, websiteController.getFancyCateogeoryList);
+router.post(`/exportFancyCateogeory`, verifyToken, websiteController.exportFancyCateogeory);
 router.post(`/validateMultipleFancy`, verifyToken, websiteController.validateMultipleFancy);
+router.post(`/insertUserInPlayModelByMarketId`, verifyToken , websiteController.insertUserInPlayModelByMarketId);
+router.post(`/checkInternationTransactionFromTransactionId`, longTimeout , websiteController.checkInternationTransactionFromTransactionId);
+router.post(`/updateInternationCoinMultiplier`, verifyToken , websiteController.updateInternationCoinMultiplier);
+router.post(`/getInternationCoinMultiplierList`, verifyToken ,websiteController.getInternationCoinMultiplierList);
+router.post(`/resetOtp`, verifyToken, websiteController.resetOtp);
+
+
+router.post(`/allProfitLossCommHistory`, verifyToken , websiteController.allProfitLossCommHistory);
+router.post(`/clientHistory`, verifyToken , websiteController.clientHistory);
+
+
+
 
 module.exports = router;

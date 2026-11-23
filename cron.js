@@ -18,8 +18,13 @@ const {
 const {
   distributeBonusToUpperline,
 } = require("./Controllers/Bets/Website.controller");
-const fs = require("fs");
 
+
+const {
+  throughFancyBookmakerBySocket,
+} = require("./Controllers/cron.controller");
+
+const fs = require("fs");
 
 db.initialize();
 const lockFilePath = "cron.lock";
@@ -47,7 +52,7 @@ let pending = false;
 
 async function runGenerateDiamondLedger(trigger = "cron") {
   if (isRunning) {
-    pending = true; 
+    pending = true;
     console.log(`[diamond-ledger] SKIP (${trigger}): already running. Will run once after finish.`);
     return;
   }
@@ -86,21 +91,15 @@ async function runGenerateDiamondLedger(trigger = "cron") {
 //   await saveResultRedisVirtual();
 // });
 
-cron.schedule("*/5 * * * * *", async () => {
-  console.log("Running cron job for saveBetfairCasinoResults... at every 15 sec");
-  await saveBetfairCasinoResults();
-});
-
-
-
-
+// cron.schedule("*/5 * * * * *", async () => {
+//   console.log("Running cron job for saveBetfairCasinoResults... at every 5 sec");
+//   await saveBetfairCasinoResults();
+// });
 
 // cron.schedule("*/1 * * * *", () => {
 //   console.log("[diamond-ledger] Cron tick (every 1 minute)");
 //   runGenerateDiamondLedger("cron"); // do NOT await inside schedule callback
 // });
-
-
 
 // cron.schedule('*/2 * * * *', async () => {
 //   console.log("Running cron job for automaticBetfairDecision... every 2 minutes");
@@ -123,3 +122,12 @@ cron.schedule("*/5 * * * * *", async () => {
 //   console.log("Running cron job... at every 5 sec");
 //   await saveAvaitorResults();
 // });
+
+
+
+// bookmaker And Fancy
+  // setInterval(() => {
+  //     throughFancyBookmakerBySocket("" , "" , "keno");
+  // },  500);
+
+

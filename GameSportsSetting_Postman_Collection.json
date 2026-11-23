@@ -1,0 +1,293 @@
+{
+  "info": {
+    "name": "GameSportsSetting APIs",
+    "description": "Sports setting of downline users : update, get and report.\n\nSetup:\n1. 'base_url' = API URL\n2. 'token' = panel login token (jwt)\n3. 'downline_user_id' = userId of a downline user\n4. 'child_user_id' = userId of a user under downline_user_id (only for request 4)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:5001/v1"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "downline_user_id",
+      "value": ""
+    },
+    {
+      "key": "child_user_id",
+      "value": ""
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "1. Get setting",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"downlineUserId\": \"{{downline_user_id}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/gameSportsSetting/get",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "gameSportsSetting",
+            "get"
+          ]
+        },
+        "description": "Current setting of the user with selfSetting (own values) and uplineSetting (upline limits). Without downlineUserId it returns your own setting."
+      }
+    },
+    {
+      "name": "2. Update - test values",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"downlineUserId\": \"{{downline_user_id}}\",\n  \"isCricket\": false,\n  \"isMatka\": false,\n  \"isFancy\": false,\n  \"cricketMaxAmount\": 50000,\n  \"fancyMaxAmount\": 25000,\n  \"casinoMaxAmount\": 10000,\n  \"fancyMaximunProfitLoss\": 40000,\n  \"bookmakerMaximunProfitLoss\": 60000,\n  \"fancyBetDelay\": 3,\n  \"bookmakerBetDelay\": 2,\n  \"tennisBetDelay\": 5,\n  \"diamondCasinoBlock\": [\n    \"c1\"\n  ],\n  \"internationalCasinoBlock\": [\n    \"g1\",\n    \"g2\"\n  ],\n  \"matkaBlock\": [\n    101,\n    102\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/gameSportsSetting/update",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "gameSportsSetting",
+            "update"
+          ]
+        },
+        "description": "Changes all types of keys. Works on a user with default setting. Expected : success."
+      }
+    },
+    {
+      "name": "3. Update - validation errors",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"downlineUserId\": \"{{downline_user_id}}\",\n  \"isCricket\": \"no\",\n  \"cricketMaxAmount\": 999999999,\n  \"fancyBetDelay\": 25,\n  \"matkaBlock\": \"101\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/gameSportsSetting/update",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "gameSportsSetting",
+            "update"
+          ]
+        },
+        "description": "Expected : error with all 4 problems in the message, nothing is saved."
+      }
+    },
+    {
+      "name": "4. Update - bet delay less than upline",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"downlineUserId\": \"{{child_user_id}}\",\n  \"fancyBetDelay\": 1\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/gameSportsSetting/update",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "gameSportsSetting",
+            "update"
+          ]
+        },
+        "description": "Run after request 2. Expected : fancyBetDelay cannot be less than upline bet delay 3."
+      }
+    },
+    {
+      "name": "5. Update - reset test values",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"downlineUserId\": \"{{downline_user_id}}\",\n  \"isCricket\": true,\n  \"isMatka\": true,\n  \"isFancy\": true,\n  \"cricketMaxAmount\": 100000,\n  \"fancyMaxAmount\": 100000,\n  \"casinoMaxAmount\": 100000,\n  \"fancyMaximunProfitLoss\": 100000,\n  \"bookmakerMaximunProfitLoss\": 100000,\n  \"fancyBetDelay\": 0,\n  \"bookmakerBetDelay\": 0,\n  \"tennisBetDelay\": 0,\n  \"diamondCasinoBlock\": [],\n  \"internationalCasinoBlock\": [],\n  \"matkaBlock\": []\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/gameSportsSetting/update",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "gameSportsSetting",
+            "update"
+          ]
+        },
+        "description": "Opposite of request 2."
+      }
+    },
+    {
+      "name": "6. Update - all keys",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"downlineUserId\": \"{{downline_user_id}}\",\n  \"isCricket\": true,\n  \"isIntCasino\": true,\n  \"isMatka\": true,\n  \"isPolitics\": true,\n  \"isCasino\": true,\n  \"isFootball\": true,\n  \"isTennis\": true,\n  \"isHourse\": true,\n  \"isGreyHound\": true,\n  \"isKabbadi\": true,\n  \"isToss\": true,\n  \"isFancy\": true,\n  \"isFigure\": true,\n  \"isMatchOdds\": true,\n  \"isEvenOdds\": true,\n  \"isCupWiner\": true,\n  \"isUnderOverGoal\": true,\n  \"isSoccerMatchOdds\": true,\n  \"soccerMaxAmount\": 100000,\n  \"tennisMaxAmount\": 100000,\n  \"cricketMaxAmount\": 100000,\n  \"greyhoundMaxAmount\": 100000,\n  \"hourseMaxAmount\": 100000,\n  \"racesMaxAmount\": 100000,\n  \"bookmakerMaxAmount\": 100000,\n  \"fancyMaxAmount\": 100000,\n  \"casinoMaxAmount\": 100000,\n  \"bookmakerMaximunProfitLoss\": 100000,\n  \"fancyMaximunProfitLoss\": 100000,\n  \"betfairMaximunProfitLoss\": 100000,\n  \"tennisMaximunProfitLoss\": 100000,\n  \"soccerMaximunProfitLoss\": 100000,\n  \"racingMaximunProfitLoss\": 100000,\n  \"bookmakerBetDelay\": 0,\n  \"fancyBetDelay\": 0,\n  \"betfairBetDelay\": 0,\n  \"tennisBetDelay\": 0,\n  \"soccerBetDelay\": 0,\n  \"racingBetDelay\": 0,\n  \"diamondCasinoBlock\": [],\n  \"internationalCasinoBlock\": [],\n  \"matkaBlock\": []\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/gameSportsSetting/update",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "gameSportsSetting",
+            "update"
+          ]
+        },
+        "description": "All 42 keys with default values. Keys having the same value as now are ignored."
+      }
+    },
+    {
+      "name": "7. Report",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"downlineUserId\": \"{{downline_user_id}}\",\n  \"pageNo\": 1,\n  \"size\": 20\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/gameSportsSetting/report",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "gameSportsSetting",
+            "report"
+          ]
+        },
+        "description": "Who changed what on this user and what it changed in the downline. Without downlineUserId it returns your complete downline."
+      }
+    },
+    {
+      "name": "8. Report - filters",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"operatorId\": \"\",\n  \"key\": \"fancyBetDelay\",\n  \"fromDate\": \"2026-11-21\",\n  \"toDate\": \"2026-11-21\",\n  \"pageNo\": 1,\n  \"size\": 20\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/gameSportsSetting/report",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "gameSportsSetting",
+            "report"
+          ]
+        },
+        "description": "All filters are optional. Empty operatorId is ignored. key = any setting key."
+      }
+    }
+  ]
+}

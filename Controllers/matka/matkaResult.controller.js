@@ -6,7 +6,6 @@ const { client } = require("../../Helpers/RedisHelper");
 const TransactionLogModel = require("../../Models/TransactionLog.model");
 const UserModel = require("../../Models/User/User.model");
 const ShareModel = require("../../Models/User/Share.model");
-const { ObjectId } = require("mongodb");
 const profitLossPosition = require("../../Models/BetsList/profitLossPosition.model");
 const StatementModel = require("../../Models/Statement.model");
 const MatkaModel = require("../../Models/Matka/Matka.model");
@@ -612,7 +611,6 @@ const matkaResult = async (req, res) => {
     await MatkaBetsModel.bulkWrite(updateProfitLossArray);
 
     let isMatkaInsert = process.env.IS_MATKA_LIST_INSERT_ON_RESULT;
-
     if (isMatkaInsert) {
       let panelResult = await matkaResultChartModel.findOne({
         matkaEventId: matkaEventId,
@@ -681,9 +679,8 @@ const matkaResult = async (req, res) => {
 
 const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate)=>{
   try{
-
     dateWhere.$gte = Number(dateWhere.$gte)
-    dateWhere.$lte = Number(dateWhere.$lt)
+    dateWhere.$lte = Number(dateWhere.$lte)
 
     let betsWhere = {
       matkaEventId: Number(matkaEventId),
@@ -705,6 +702,10 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
         $group: groupCond,
       },
     ]);
+
+
+//    _dx(matkaTransactionPerday , "matkaTransactionPerday")
+
 
     matkaTransactionPerday.map((transaction)=>{
       clientIdArray.push(transaction._id)
@@ -754,15 +755,12 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
 
     shareData = convertKeyObject(shareData, "userId");
 
+
     let matkaResult =  await matkaResultChartModel.findOne({
       matkaEventId : Number(matkaEventId),
       date : dateWhere
     })
 
-
-
-
-    
 
     let userLedgerObj = {};
     let userLedger = [];
@@ -818,7 +816,7 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
   
       // agent calculation
       let agentTotalComm =
-        (totalTurnOver * clientShareData.agentMatkaCommission) / 100;
+        -1 * (profitLoss * clientShareData.agentMatkaCommission) / 100;
   
       let agentComm =
         (agentTotalComm * (100 - clientShareData.agentMatkaShare)) / 100;
@@ -830,7 +828,7 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
   
       // super calculation
       let superagentTotalComm =
-        (totalTurnOver * clientShareData.superagentMatkaCommission) / 100;
+        -1 * (profitLoss * clientShareData.superagentMatkaCommission) / 100;
       let superagentComm =
         (superagentTotalComm * (100 - clientShareData.superagentMatkaShare)) /
         100;
@@ -842,7 +840,7 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
   
       //master calculation
       let masterTotalComm =
-        (totalTurnOver * clientShareData.masterMatkaCommission) / 100;
+        -1 * (profitLoss * clientShareData.masterMatkaCommission) / 100;
       let masterComm =
         (masterTotalComm * (100 - clientShareData.masterMatkaShare)) / 100;
       let masterLedgerAmount =
@@ -852,7 +850,7 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
   
       //subadmin calculation
       let subadminTotalComm =
-        (totalTurnOver * clientShareData.subadminMatkaCommission) / 100;
+        -1 * (profitLoss * clientShareData.subadminMatkaCommission) / 100;
       let subadminComm =
         (subadminTotalComm * (100 - clientShareData.subadminMatkaShare)) / 100;
       let subadminLedgerAmount =
@@ -862,7 +860,7 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
   
       //admin calculation
       let adminTotalComm =
-        (totalTurnOver * clientShareData.adminMatkaCommission) / 100;
+        -1 * (profitLoss * clientShareData.adminMatkaCommission) / 100;
       let adminComm =
         (adminTotalComm * (100 - clientShareData.adminMatkaShare)) / 100;
       let adminLedgerAmount =
@@ -871,7 +869,7 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
   
       //superadmin calculation
       let superadminTotalComm =
-        (totalTurnOver * clientShareData.superadminMatkaCommission) / 100;
+        -1 * (profitLoss * clientShareData.superadminMatkaCommission) / 100;
       let superadminComm =
         (superadminTotalComm * (100 - clientShareData.superadminMatkaShare)) /
         100;
@@ -882,7 +880,7 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
   
       //subowner calculation
       let subownerTotalComm =
-        (totalTurnOver * clientShareData.subownerMatkaCommission) / 100;
+       -1 *  (profitLoss * clientShareData.subownerMatkaCommission) / 100;
       let subownerComm =
         (subownerTotalComm * (100 - clientShareData.subownerMatkaShare)) / 100;
       let subownerLedgerAmount =
@@ -892,7 +890,7 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
   
       //owner calculation
       let ownerTotalComm =
-        (totalTurnOver * clientShareData.ownerMatkaCommission) / 100;
+        -1 * (profitLoss * clientShareData.ownerMatkaCommission) / 100;
       let ownerComm =
         (ownerTotalComm * (100 - clientShareData.ownerMatkaShare)) / 100;
       let ownerLedgerAmount =
@@ -1146,10 +1144,6 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
 
 
 
-      
-
-
-
   
       profitLossPositionObj[clientId].clientOddsAmount += profitLoss;
       profitLossPositionObj[clientId].clientOddsComm += clientComm;
@@ -1213,6 +1207,10 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
     });
 
 
+
+
+  // _dx(userLedgerObj['6a0eafbbfb647e3c87df411e'], "userLedgerObj")
+
     for (let key in userLedgerObj) {
       if (userLedgerObj.hasOwnProperty(key)) {
         let ledger = userLedgerObj[key];
@@ -1253,9 +1251,6 @@ const generateMatkaLedger = async (matkaEventId,dateWhere , showDate , todayDate
      console.log(`error in generate in matka ledger` , error)
   }
 }
-
-
-
 
 
 module.exports = {

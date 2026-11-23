@@ -7,12 +7,9 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { SendResponse } = require("../../Helpers/ResponseMapper");
-const { _date_time , _d , _dx} = require("../../Helpers/CommonHelper");
+const { _d , _dx} = require("../../Helpers/CommonHelper");
 var requestIp = require("request-ip");
-const { timeStamp } = require("console");
 const { client } = require("../../Helpers/RedisHelper");
-const speakeasy = require("speakeasy");
-const QRCode = require("qrcode");
 
 // Log staff activity (fire-and-forget, never blocks main flow)
 function logStaffActivity(data) {

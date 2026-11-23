@@ -225,6 +225,10 @@ const SportListSchema = new mongoose.Schema(
       type: Number,
       default: 10000000,
     },
+    isOwnSocket: {
+      type: Boolean,
+      default: false,
+    },
     date: {
       type: String,
       default: () => moment().unix() * 1000,

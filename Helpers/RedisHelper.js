@@ -25,20 +25,20 @@ const makeRedisClient = ({ host, port, password, name } = {}) => {
     throw new Error(`${name || "Redis"} host/port not configured`);
   }
 
-  const client = createAsyncRedis.createClient({
+  const opts = {
     host,
     port,
-    password,
     ...DEFAULT_OPTS,
-    // ============================================================
-    // HIGH CONCURRENCY — million users ke liye
-    // ============================================================
     enable_offline_queue: true,
     no_ready_check: false,
-  });
+  };
+  // password sirf tab bhejo jab actually set ho — warna Redis warning deta hai
+  if (password) opts.password = password;
 
-  // Increase max listeners for high concurrent load
-  client.setMaxListeners(0);
+  const client = createAsyncRedis.createClient(opts);
+
+  // Set a reasonable max listeners limit instead of unlimited
+  client.setMaxListeners(50);
 
   client.on("connect", () => {
     console.log(`${name || "Redis"} client connected (${host}:${port})`);
@@ -55,13 +55,81 @@ const makeRedisClient = ({ host, port, password, name } = {}) => {
   return client;
 };
 
+// --- key prefix wrapper ---
+// .env me REDIS_PREFIX set karo (e.g. REDIS_PREFIX=project1_)
+// saari Redis keys me automatically prefix lag jayega
+const REDIS_PREFIX = process.env.REDIS_PREFIX || "";
+
+const prefixKey = (key) => REDIS_PREFIX + key;
+
+const wrapClientWithPrefix = (rawClient) => {
+  if (!REDIS_PREFIX) return rawClient;
+
+  const handler = {
+    get(target, prop) {
+      const original = target[prop];
+      if (typeof original !== "function") return original;
+
+      // commands jinka pehla argument key hai
+      const singleKeyCommands = new Set([
+        "get", "set", "del", "setex", "expire", "incr", "decr",
+        "exists", "ttl", "pttl", "type", "persist", "setnx",
+        "getset", "lpush", "rpush", "lrange", "llen", "lpop", "rpop",
+        "sadd", "srem", "smembers", "sismember", "scard",
+        "zadd", "zrem", "zrange", "zrangebyscore", "zscore", "zcard",
+        "hget", "hset", "hdel", "hgetall", "hmset", "hmget", "hexists", "hkeys", "hvals",
+        "append", "strlen", "getrange", "setrange",
+      ]);
+
+      // commands jinka multiple keys hote hain
+      const multiKeyCommands = new Set(["del", "exists", "mget", "unlink"]);
+
+      if (singleKeyCommands.has(prop)) {
+        return function (key, ...args) {
+          return original.call(target, prefixKey(key), ...args);
+        };
+      }
+
+      if (prop === "keys") {
+        return function (pattern, ...args) {
+          return original.call(target, prefixKey(pattern), ...args);
+        };
+      }
+
+      // flushall/flushdb — sirf prefix wali keys delete karo, poora Redis flush nahi
+      // SCAN use karta hai KEYS ki jagah — production safe, non-blocking
+      if (prop === "flushall" || prop === "flushdb") {
+        return async function () {
+          let cursor = "0";
+          let deleted = 0;
+          do {
+            const [nextCursor, keys] = await target.scan(cursor, "MATCH", `${REDIS_PREFIX}*`, "COUNT", 500);
+            cursor = nextCursor;
+            if (keys && keys.length > 0) {
+              await target.del(...keys);
+              deleted += keys.length;
+            }
+          } while (cursor !== "0");
+          console.log(`flushall (prefixed): deleted ${deleted} keys with prefix "${REDIS_PREFIX}"`);
+          return deleted;
+        };
+      }
+
+      return original.bind(target);
+    },
+  };
+
+  return new Proxy(rawClient, handler);
+};
+
 // create primary client
-const client = makeRedisClient({
+const rawClient = makeRedisClient({
   host: process.env.REDIS_HOST,
   port: process.env.REDIS_PORT,
   password: process.env.REDIS_PASSWORD,
   name: "PrimaryRedis",
 });
+const client = wrapClientWithPrefix(rawClient);
 
 
 let centerpanelRedis = null;
@@ -78,13 +146,29 @@ if (process.env.IS_CENTERPANEL_REDIS == "true") {
     console.error("Failed to initialize centerpanel redis:", err);
     centerpanelRedis = null;
   }
-  }
+}
 
 
 // --- small in-memory cache to reduce Redis round trips for hot keys ---
 const memoryCache = new Map(); // key -> { value, expiresAt }
+const MAX_CACHE_SIZE = 10_000;
+
+const CACHE_CLEANUP_INTERVAL = 30_000; // 30 seconds
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, row] of memoryCache) {
+    if (now > row.expiresAt) {
+      memoryCache.delete(key);
+    }
+  }
+}, CACHE_CLEANUP_INTERVAL).unref();
+
 const setMemoryCache = (key, value, ttlMs = 500) => {
-  // default tiny TTL to keep responses fresh while reducing load
+  // limit cross hone pe sabse purani entries hatao (Map insertion order maintain karta hai)
+  if (memoryCache.size >= MAX_CACHE_SIZE && !memoryCache.has(key)) {
+    const firstKey = memoryCache.keys().next().value;
+    memoryCache.delete(firstKey);
+  }
   memoryCache.set(key, { value, expiresAt: Date.now() + ttlMs });
 };
 const getMemoryCache = (key) => {
@@ -114,33 +198,33 @@ const redisGetWithTimeout = async (redisClient, key, timeoutMs = 2000) => {
   const mem = getMemoryCache(key);
   if (mem !== null) return mem;
 
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error("Redis GET timeout")), timeoutMs)
-  );
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("Redis GET timeout")), timeoutMs);
+  });
 
   try {
     const getPromise = redisClient.get(key);
     const raw = await Promise.race([getPromise, timeoutPromise]);
+    clearTimeout(timer);
     if (raw == null) return null;
     const parsed = safeJsonParse(raw);
-    // store small in-memory cache to reduce next redis call
-    setMemoryCache(key, parsed ?? raw, Math.max(200, Math.min(2000, timeoutMs * 2)));
+    setMemoryCache(key, parsed ?? raw, 500);
     return parsed ?? raw;
   } catch (err) {
-    // don't let Redis failures crash the app — log and return null
+    clearTimeout(timer);
     console.error(`redisGetWithTimeout error for key="${key}":`, err.message || err);
     return null;
   }
 };
 
 // public getters (safe + optimized)
-const getBookmakerFancyByRedis = async (marketId , eventId) => {
+const getBookmakerFancyByRedis = async (marketId, eventId) => {
   if (!marketId) return [];
-  console.log(marketId , "marketId")
   const finalKey = `allFinalOddsData_${marketId}`;
   const redis = centerpanelRedis || client;
-  const data = await redisGetWithTimeout(centerpanelRedis, finalKey, 3000);
-  return Array.isArray(data) ? data : (data ? data : []);
+  const data = await redisGetWithTimeout(redis, finalKey, 3000);
+  return Array.isArray(data) ? data : [];
 };
 
 const getBetfairMarketDataByRedis = async (marketId) => {
@@ -159,6 +243,12 @@ const getRacingDataByRedis = async (marketId) => {
   return data ?? [];
 };
 
+// convenience getter — get + JSON.parse + memory cache in one call
+const getRedisJson = async (key, redisClient = null) => {
+  const redis = redisClient || client;
+  return redisGetWithTimeout(redis, key, 2000);
+};
+
 // optional convenience setter (keeps mem cache in sync)
 const setRedisJson = async (key, obj, ttlSeconds = undefined, redisClient = null) => {
   const redis = redisClient || client;
@@ -169,7 +259,6 @@ const setRedisJson = async (key, obj, ttlSeconds = undefined, redisClient = null
     } else {
       await redis.set(key, value);
     }
-    // update small in-memory cache
     setMemoryCache(key, obj, 500);
     return true;
   } catch (err) {
@@ -186,7 +275,7 @@ const quitAll = async () => {
     console.warn("Error quitting centerpanel redis:", e.message || e);
   }
   try {
-    if (client) await client.quit();
+    if (rawClient) await rawClient.quit();
   } catch (e) {
     console.warn("Error quitting primary redis:", e.message || e);
   }
@@ -197,7 +286,8 @@ module.exports = {
   getBookmakerFancyByRedis,
   getBetfairMarketDataByRedis,
   getRacingDataByRedis,
+  getRedisJson,
   setRedisJson,
   quitAll,
-  centerpanelRedis:centerpanelRedis
+  centerpanelRedis: centerpanelRedis,
 };

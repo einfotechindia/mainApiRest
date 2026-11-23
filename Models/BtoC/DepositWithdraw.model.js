@@ -57,6 +57,10 @@ let DepositWithdraw = new Schema(
       type: mongoose.Schema.Types.ObjectId,
       default: null,
     },
+    subagentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
     creatorId: {
       type: mongoose.Schema.Types.ObjectId,
       default: null,

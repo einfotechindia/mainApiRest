@@ -1,6 +1,5 @@
 const sportListModel = require("../../Models/sportList.model");
 const ProfitLossPositionModel = require("../../Models/BetsList/profitLossPosition.model");
-const CrickTransactionLogModel = require("../../Models/crickTransaction.model");
 const OddsBetsListModel = require("../../Models/BetsList/OddsBetsList.model");
 const FancyBetsListModel = require("../../Models/BetsList/FancyBetsList.model");
 const { ObjectId } = require("mongodb");

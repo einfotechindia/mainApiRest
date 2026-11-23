@@ -1,5 +1,4 @@
 const UserModel = require("../../Models/User/User.model");
-const TransactionLogModel = require("../../Models/TransactionLog.model");
 const CrickTransactionModel = require("../../Models/crickTransaction.model");
 const LedgerModel = require("../../Models/Ledger.model");
 const CasinoBetsModel = require("../../Models/BetsList/CasinoBetsList.model");
@@ -7,9 +6,7 @@ const FancyBetsModel = require("../../Models/BetsList/FancyBetsList.model");
 const OddsBetsModel = require("../../Models/BetsList/OddsBetsList.model");
 const LoginActivityModel = require("../../Models/LoginActivity.model");
 const CommLedgerModel = require("../../Models/commLedger.model");
-const StatementModel = require("../../Models/Statement.model");
 const { SendResponse } = require("../../Helpers/ResponseMapper");
-const mongoose = require("mongoose");
 
 async function getUserAnalytics(req, res) {
   try {

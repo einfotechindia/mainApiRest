@@ -1,5 +1,4 @@
 const UserModel = require("../../Models/User/User.model");
-const DepositWithdrawModel = require("../../Models/BtoC/DepositWithdraw.model");
 const CrickTransactionLogModel = require("../../Models/crickTransaction.model");
 const { SendResponse } = require("../../Helpers/ResponseMapper");
 const { UpdateUserCoins } = require("../../Helpers/TransactionHelper");

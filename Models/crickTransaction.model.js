@@ -65,8 +65,8 @@ const CrickTransactionLogSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-    seriesId: {
-      type: Number,
+      seriesId: {
+      type: mongoose.Schema.Types.Mixed,
       default: 0,
     },
     isComm: {
@@ -247,6 +247,7 @@ const CrickTransactionLogModel = mongoose.model(
       { key: { marketId: 1, selectionId: 1 } },
       // UserReport/dashboard — profitLoss queries by date
       { key: { transactionType: 1, date: 1 } },
+      { key: { marketType: 1, date: 1 } },
     ];
 
     for (const index of neededIndexes) {

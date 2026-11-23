@@ -1,15 +1,28 @@
 const Constants = require("../Common/Constants");
 const UserModel = require("../Models/User/User.model");
 const { InsertUserActivity } = require("../Helpers/StatementHelper");
-const { _dx, _d, getSettingData } = require("./CommonHelper");
+const { _dx, _d, getSettingData , getWebsiteDataByReq } = require("./CommonHelper");
 const { ObjectId } = require("mongodb");
 const { client } = require("./RedisHelper");
 const ShareModel = require("../Models/User/Share.model");
 const directUserShareModel = require("../Models/User/directUserShareModel");
 const bcrypt = require("bcrypt");
 
-async function UsersCode(UserType, countUsertype) {
-  let settingData = await getSettingData();
+async function UsersCode(UserType, countUsertype , req = {}) {
+  let [settingData, websiteReqData] = await Promise.all([
+    getSettingData(),
+    getWebsiteDataByReq(req , true)
+  ])
+
+  let codeSetting = {}
+  if (websiteReqData?.domainData?.codeSetting) {
+    codeSetting = websiteReqData?.domainData?.codeSetting;
+    if (codeSetting) {
+      settingData = codeSetting
+    }
+  }
+  
+  
   let count = 100;
   let Name = "";
   switch (UserType.toLowerCase()) {
@@ -121,194 +134,6 @@ const isValidUserData = async (parentData, userId) => {
   return (userCount = await UserModel.countDocuments(queryObj));
 };
 
-// const userCountDetails = async (userType, userId) => {
-//   let field = `${userType}Id`;
-//   let queryObj = {
-//     status: 1,
-//     [field]: new ObjectId(userId),
-//   };
-//   let groupCond = {
-//     _id: `$${field}`,
-//     sunOwnerCount: {
-//       $sum: {
-//         $cond: [
-//           {
-//             $and: [{ $eq: ["$userType", "subowner"] }],
-//           },
-//           "$status",
-//           0,
-//         ],
-//       },
-//     },
-//     superadminCount: {
-//       $sum: {
-//         $cond: [
-//           {
-//             $and: [{ $eq: ["$userType", "superadmin"] }],
-//           },
-//           "$status",
-//           0,
-//         ],
-//       },
-//     },
-//     subadminCount: {
-//       $sum: {
-//         $cond: [
-//           {
-//             $and: [{ $eq: ["$userType", "subadmin"] }],
-//           },
-//           "$status",
-//           0,
-//         ],
-//       },
-//     },
-//     admin: {
-//       $sum: {
-//         $cond: [
-//           {
-//             $and: [{ $eq: ["$userType", "admin"] }],
-//           },
-//           "$status",
-//           0,
-//         ],
-//       },
-//     },
-//     master: {
-//       $sum: {
-//         $cond: [
-//           {
-//             $and: [{ $eq: ["$userType", "master"] }],
-//           },
-//           "$status",
-//           0,
-//         ],
-//       },
-//     },
-//     superagent: {
-//       $sum: {
-//         $cond: [
-//           {
-//             $and: [{ $eq: ["$userType", "superagent"] }],
-//           },
-//           "$status",
-//           0,
-//         ],
-//       },
-//     },
-//     agent: {
-//       $sum: {
-//         $cond: [
-//           {
-//             $and: [{ $eq: ["$userType", "agent"] }],
-//           },
-//           "$status",
-//           0,
-//         ],
-//       },
-//     },
-//     client: {
-//       $sum: {
-//         $cond: [
-//           {
-//             $and: [{ $eq: ["$userType", "client"] }],
-//           },
-//           "$status",
-//           0,
-//         ],
-//       },
-//     },
-//   };
-
-//   var res = await UserModel.aggregate([
-//     {
-//       $match: queryObj,
-//     },
-//     {
-//       $group: groupCond,
-//     },
-//   ]);
-
-
-//   return res;
-// };
-
-
-// const userCountDetails = async (parentUserType, parentId) => {
-//   try {
-//     const allowedParentTypes = [
-//       "owner",
-//       "subowner",
-//       "superadmin",
-//       "admin",
-//       "subadmin",
-//       "master",
-//       "superagent",
-//       "agent",
-//     ];
-
-//     const childUserTypes = [
-//       "subowner",
-//       "superadmin",
-//       "subadmin",
-//       "admin",
-//       "master",
-//       "superagent",
-//       "agent",
-//       "client",
-//     ];
-
-//     if (!allowedParentTypes.includes(parentUserType)) {
-//       throw new Error("Invalid parent user type");
-//     }
-
-//     const field = `${parentUserType}Id`;
-
-//     const aggData = await UserModel.aggregate([
-//       {
-//         $match: {
-//           [field]: new ObjectId(parentId),
-//           userType: { $in: childUserTypes },
-//           status: { $in: [0, 1] }, // 0 = inactive, 1 = active
-//           isDeleted: false,
-//         },
-//       },
-//       {
-//         $group: {
-//           _id: {
-//             userType: "$userType",
-//             status: "$status",
-//           },
-//           count: { $sum: 1 },
-//         },
-//       },
-//     ]);
-
-//     const result = {
-//       subowner: { active: 0, inactive: 0, total: 0 },
-//       superadmin: { active: 0, inactive: 0, total: 0 },
-//       subadmin: { active: 0, inactive: 0, total: 0 },
-//       admin: { active: 0, inactive: 0, total: 0 },
-//       master: { active: 0, inactive: 0, total: 0 },
-//       superagent: { active: 0, inactive: 0, total: 0 },
-//       agent: { active: 0, inactive: 0, total: 0 },
-//       client: { active: 0, inactive: 0, total: 0 },
-//     };
-
-//     for (const row of aggData) {
-//       const type = row._id.userType;
-//       const statusKey = row._id.status === 1 ? "active" : "inactive";
-
-//       if (result[type]) {
-//         result[type][statusKey] = row.count;
-//         result[type].total += row.count;
-//       }
-//     }
-
-//     return result;
-//   } catch (error) {
-//     throw error;
-//   }
-// };
 
 const userCountDetails = async (parentUserType, parentId) => {
   try {

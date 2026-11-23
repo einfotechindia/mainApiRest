@@ -5,7 +5,6 @@ const OddsBetModel = require("../../Models/BetsList/OddsBetsList.model");
 const sportListModel = require("../../Models/sportList.model");
 const TransactionLogModel = require("../../Models/TransactionLog.model");
 const ledgerModel = require("../../Models/Ledger.model");
-const profitLossPosition = require("../../Models/BetsList/profitLossPosition.model");
 const fancyListModel = require("../../Models/fancyList.model");
 const DecisionController = require("../../Controllers/Bets/Decision.controller");
 const { _dx, _d, detectIsTime, dateWhereCond } = require("../../Helpers/CommonHelper");
@@ -139,12 +138,22 @@ async function BetfairDecisionAutomatic(req, res) {
 async function BetfairDecisionManual(req, res) {
   const startTime = Date.now();
   try {
-    const { marketId, betfairMarketId, decisionSelectionId } = req.body;
+    const { marketId, betfairMarketId, decisionSelectionId , eventId , decisionSelectionIdArray } = req.body;
     if (!marketId) return SendResponse(res, "error", "marketId is required");
     if (!betfairMarketId) return SendResponse(res, "error", "betfairMarketId is required");
     if (!decisionSelectionId) return SendResponse(res, "error", "decisionSelectionId is required");
-    const { mockReq, mockRes, getResponse } = createMockReqRes({ marketId, betfairMarketId, decisionSelectionId });
+    let { mockReq, mockRes, getResponse } = createMockReqRes({ marketId, betfairMarketId, decisionSelectionId , eventId , decisionSelectionIdArray });
+    
+
+   if (Array.isArray(decisionSelectionIdArray) && decisionSelectionIdArray.length > 1) {
+     mockReq.body.decisionSelectionIdArray = decisionSelectionIdArray;
+   }
+
     await DecisionController.manualBetfairDecision(mockReq, mockRes);
+
+
+   // _d(mockReq)
+
     const execTime = Date.now() - startTime;
     updateLog(req.centerPanelIp, "betfairDecisionManual", execTime, getResponse()?.message);
     return sendResult(res, getResponse(), { marketId, betfairMarketId, decisionSelectionId }, execTime);
@@ -160,7 +169,6 @@ async function BetfairDecisionManual(req, res) {
 //  Calls: sessionDecision
 // ═══════════════════════════════════════════════════════════════
 async function FancyDecision(req, res) {
-//  _d("pp")
   const startTime = Date.now();
   try {
     const { marketId, selectionId, decisionRun } = req.body;

@@ -10,10 +10,8 @@ const {
   GetUserCoinsByMarketId,
   getOddsPositionByMarketId,
 } = require("../../Helpers/TransactionHelper");
-const { get } = require("../../Helpers/RedisHelper");
 const casinoBetModel = require("../../Models/BetsList/CasinoBetsList.model");
 const TransactionLogModel = require("../../Models/TransactionLog.model");
-const { ObjectId } = require("mongodb");
 var requestIp = require("request-ip");
 const Joi = require("joi");
 const CasinoService = require("../../Services/DiamondCasino/DiamondCasino.service");

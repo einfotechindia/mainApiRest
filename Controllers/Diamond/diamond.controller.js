@@ -26,12 +26,7 @@ const {
   const crickTransaction = require("../../Models/crickTransaction.model");
   const DepositWithdrawModel = require("../../Models/BtoC/DepositWithdraw.model");
   const InternationalCasinoBlockModel = require("../../Models/Sports/internationalCasinoBlock.model");
-  const {
-    UpdateUserCoins,
-    userIntCasinoExpoLimit,
-    GetUserCoins,
-    updateCoinsTbl,
-  } = require("../../Helpers/TransactionHelper");
+
 const { InsertUserStatement } = require("../../Helpers/StatementHelper");
 const oddsBetsList = require("../../Models/BetsList/OddsBetsList.model");
 const transactionHelper = require("../../Helpers/TransactionHelper")
@@ -203,7 +198,14 @@ const userListNew = async (req, res) => {
     };
 
 
-    const projection = {
+
+      if (bodyData.hasOwnProperty("status")) {
+        userWhere.status = bodyData.status;
+    }
+  
+
+
+    let projection = {
         profitLoss: 1,
         coins: 1,
         exposure: 1,
@@ -240,10 +242,17 @@ const userListNew = async (req, res) => {
         userId: 1,
         creatorId: 1,
         allowedDomains: 1,
+        exposureLimit:1,
+    }
+
+    if (bodyData.specific) {
+      projection = bodyData.specific
     }
     
     const limit = Number(bodyData.size) || 0;
     const skip = limit ? limit * (Number(bodyData.pageNo) - 1) : 0;
+
+
     const users = await UserModel.find(userWhere, projection)
       .sort({ _id: -1 })
       .skip(skip)
@@ -272,6 +281,15 @@ const userListNew = async (req, res) => {
         }
 
 
+        let ledgerAmount = `${findUserType}LedgerAmount`
+        let profitUserAmount = `${findUserType}ProfitLoss`
+        if (findUserType == "client") {
+          ledgerAmount = "amount"
+          profitUserAmount = "amount"
+        }
+
+
+
         let ledgerAgg = await crickTransaction.aggregate([
               {
                 $match: ledgerMatch
@@ -283,7 +301,7 @@ const userListNew = async (req, res) => {
                     $sum: {
                       $cond: [
                         { $eq: ["$transactionType", "profitLoss"] },
-                        `$${findUserType}LedgerAmount`,
+                        `$${ledgerAmount}`,
                         0
                       ]
                     }
@@ -292,7 +310,7 @@ const userListNew = async (req, res) => {
                     $sum: {
                       $cond: [
                         { $eq: ["$transactionType", "profitLoss"] },
-                        `$${findUserType}ProfitLoss`,
+                        `$${profitUserAmount}`,
                         0
                       ]
                     }
@@ -329,14 +347,14 @@ const userListNew = async (req, res) => {
 
                 }
               }
-              ]);
-    
+        ]);
+
+
+
+       // _d(ledgerAgg[0] , "ledgerAgg[0]")
         
-        //_d(ledgerAgg[0], "ledgerAgg")
-
+  
         ledgerMap[ledgerAgg[0]?._id] = ledgerAgg[0];
-
-
         users[index].userLedger = ledgerAgg[0]?.userLedger ? ledgerAgg[0]?.userLedger : 0 
         users[index].userProfitLoss = ledgerAgg[0]?.userProfitLoss ? ledgerAgg[0]?.userProfitLoss :0
         users[index].settledAmount = ledgerAgg[0]?.settledAmount ? ledgerAgg[0]?.settledAmount : 0 
@@ -1077,7 +1095,7 @@ const userDepsitSettlementData = async (userId, userType) => {
   let amountProfitLossType =  userType!="client" ? `$${userType}ProfitLoss` : "$amount"
   let amountLedgerType = userType != "client" ? `$${userType}LedgerAmount` : "$amount"
   
-  _d(amountLedgerType , "amountLedgerType")
+ // _d(amountLedgerType , "amountLedgerType")
   let groupUser = {
     _id: `$${userType}Id`,
     totalSettlementAmountByParent: {
@@ -1237,6 +1255,9 @@ let diamondBalanceSheet = async (req, res) => {
         },
       }
 
+
+     // _d(crickWhereObj , "crickWhereObj")
+
       let selfCrickData = await crickTransaction.aggregate([
         {
           $match: crickWhereObj,
@@ -1247,8 +1268,9 @@ let diamondBalanceSheet = async (req, res) => {
       ]);
 
 
+     // _d(selfCrickData[0], "selfCrickData[0]")
+      
       if (selfCrickData[0]) {
-
         let userLedgerAmount = selfCrickData[0]?.userLedgerAmount ? selfCrickData[0]?.userLedgerAmount : 0
         let parentCash = selfCrickData[0]?.parentCash ? selfCrickData[0]?.parentCash : 0
         
@@ -1262,9 +1284,10 @@ let diamondBalanceSheet = async (req, res) => {
             username: userData.username,
             name: userData.name,
             coins: userData.coins,
+            settledAmount: parentCash,
+            userLedgerAmount:userLedgerAmount
           }
         
-        _d(pushArray , "pp")
           finalLedgerData.push(pushArray)
       }
     }
@@ -1399,8 +1422,6 @@ let diamondBalanceSheet = async (req, res) => {
       },
     ]);
 
-
-    _d(selfCrickData , "")
 
     selfCrickData.map((data) => {
       selfCrickData[0].marketProfitLoss = -1 * data.marketProfitLoss

@@ -88,6 +88,10 @@ const LedgerSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       default: null,
     },
+    crickTransactionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
     date: {
       type: String,
       default: () => moment().startOf("day").toDate(),

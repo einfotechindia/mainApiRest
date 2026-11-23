@@ -16,6 +16,42 @@ const ActivitySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       default: null,
     },
+    ownerId: {
+          type: mongoose.Schema.Types.ObjectId,
+          default: null,
+        },
+        subownerId: {
+          type: mongoose.Schema.Types.ObjectId,
+          default: null,
+        },
+        superadminId: {
+          type: mongoose.Schema.Types.ObjectId,
+          default: null,
+        },
+        adminId: {
+          type: mongoose.Schema.Types.ObjectId,
+          default: null,
+        },
+        subadminId: {
+          type: mongoose.Schema.Types.ObjectId,
+          default: null,
+        },
+        masterId: {
+          type: mongoose.Schema.Types.ObjectId,
+          default: null,
+        },
+        superagentId: {
+          type: mongoose.Schema.Types.ObjectId,
+          default: null,
+        },
+        agentId: {
+          type: mongoose.Schema.Types.ObjectId,
+          default: null,
+        },
+        clientId: {
+          type: mongoose.Schema.Types.ObjectId,
+          default: null,
+        },
     operatorName: {
       type: String,
       default: null,
@@ -27,6 +63,9 @@ const ActivitySchema = new mongoose.Schema(
     userType: {
       type: String,
       required: true,
+    },
+    ip: {
+      type: String,
     },
     activityType: {
       type: String,

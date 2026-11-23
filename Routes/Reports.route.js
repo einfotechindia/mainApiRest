@@ -143,4 +143,11 @@ router.post(
   reportsServices.completedEventsNew
 );
 
+
+
+router.post(
+  "/matchDetailsSummary",
+  verifyToken,
+  reportsServices.matchDetailsSummary
+);
 module.exports = router;

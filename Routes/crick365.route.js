@@ -126,5 +126,13 @@ router.post(
   crick365Services.checkMaximumWithdrwalAmount
 );
 
+router.post(
+  "/sportCasinoWiseReport",
+  verifyToken,
+  crick365Services.sportCasinoWiseReport
+);
+
+
+
 
 module.exports = router;

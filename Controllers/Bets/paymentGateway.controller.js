@@ -2,7 +2,6 @@ const { SendResponse } = require("../../Helpers/ResponseMapper");
 const { client } = require("../../Helpers/RedisHelper");
 const { ObjectId } = require("mongodb");
 const crypto = require("crypto");
-var requestIp = require("request-ip");
 const Joi = require("joi");
 const { siteSetting } = require("../../Common/Constants");
 const {
@@ -19,11 +18,8 @@ const {
   sanitize
 } = require("../../Helpers/CommonHelper");
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
 const UserModel = require("../../Models/User/User.model");
 const axios = require("axios");
-const bcrypt = require("bcrypt");
 const {
   UpdateUserCoins,
   userIntCasinoExpoLimit,
@@ -81,9 +77,9 @@ async function payInRequest(req, res) {
       webhook_url: "http://101.53.148.246:5001/getPaymentInfo",
     };
 
-    _d(payload, "payload")
+    // _d(payload, "payload")
     
-    _d(PAYMENT_PAY_IN_API , "PAYMENT_PAY_IN_API")
+    // _d(PAYMENT_PAY_IN_API , "PAYMENT_PAY_IN_API")
   
     let encryptDatapayLoad = encryptData(payload)
     const requestBody = { encrypted_data: encryptDatapayLoad };
@@ -108,7 +104,7 @@ async function payInRequest(req, res) {
     }
 
 
-    _d(apiResponse.data)
+   // _d(apiResponse.data)
 
   } catch (error) {
     console.error("payInRequest ERROR:", error);
@@ -194,14 +190,14 @@ async function checkStatus(req, res) {
 
 async function checkBalance(req, res) {
   try {
-    _d(PAYMENT_CHECK_BALANCE_API, "PAYMENT_CHECK_BALANCE_API")
+   // _d(PAYMENT_CHECK_BALANCE_API, "PAYMENT_CHECK_BALANCE_API")
     
         let headers =  {
             "Content-Type": "application/json",
             Authorization: "Bearer " + bearerToken,
           }
 
-    _d(headers , "headers")
+   // _d(headers , "headers")
 
     let apiResponse;
     try {
@@ -218,7 +214,7 @@ async function checkBalance(req, res) {
     }
 
 
-    _d(apiResponse)
+   // _d(apiResponse)
 
   } catch (error) {
     console.error("payInRequest ERROR:", error);

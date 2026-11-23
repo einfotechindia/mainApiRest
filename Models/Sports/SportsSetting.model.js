@@ -57,7 +57,7 @@ const SportsSettingSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-       isFigure: {
+    isFigure: {
       type: Boolean,
       default: true,
     },
@@ -117,6 +117,56 @@ const SportsSettingSchema = new mongoose.Schema(
       type: Number,
       default: 100000,
     },
+    // bet delay in seconds, downline can not have less than upline
+    bookmakerBetDelay: {
+      type: Number,
+      default: 0,
+    },
+    fancyBetDelay: {
+      type: Number,
+      default: 0,
+    },
+    betfairBetDelay: {
+      type: Number,
+      default: 0,
+    },
+    tennisBetDelay: {
+      type: Number,
+      default: 0,
+    },
+    soccerBetDelay: {
+      type: Number,
+      default: 0,
+    },
+    racingBetDelay: {
+      type: Number,
+      default: 0,
+    },
+    // maximum profit loss, downline can not have more than upline
+    bookmakerMaximunProfitLoss: {
+      type: Number,
+      default: 100000,
+    },
+    fancyMaximunProfitLoss: {
+      type: Number,
+      default: 100000,
+    },
+    betfairMaximunProfitLoss: {
+      type: Number,
+      default: 100000,
+    },
+    tennisMaximunProfitLoss: {
+      type: Number,
+      default: 100000,
+    },
+    soccerMaximunProfitLoss: {
+      type: Number,
+      default: 100000,
+    },
+    racingMaximunProfitLoss: {
+      type: Number,
+      default: 100000,
+    },
     casinoSetting: {},
     creatorId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -157,7 +207,19 @@ const SportsSettingSchema = new mongoose.Schema(
     tpin : {
       type: Number,
       default: 0,
-    },   
+    }, 
+    diamondCasinoBlock : [],
+    // blocked international casino gameId
+    internationalCasinoBlock : [],
+    // blocked matkaEventId
+    matkaBlock : [],
+    // Values set directly on this user by upline (only the keys that were changed).
+    // Top level fields above are the effective values = upline + selfSetting.
+    selfSetting: {},
+    // true while the new values of this user are not yet pushed to its complete downline
+    cascadePending: {
+      type: Boolean,
+    },
     date: {
       type: Number,
       default: () => moment().unix() * 1000,
@@ -175,6 +237,15 @@ const ensureIndexes = async () => {
     const existingIndexes = await SportsSettingModel.collection.indexes();
     const requiredIndexes = [
       { key: { userId: 1  , userType :1} },
+      { key: { ownerId: 1 } },
+      { key: { subownerId: 1 } },
+      { key: { superadminId: 1 } },
+      { key: { adminId: 1 } },
+      { key: { subadminId: 1 } },
+      { key: { masterId: 1 } },
+      { key: { superagentId: 1 } },
+      { key: { agentId: 1 } },
+      { key: { cascadePending: 1 }, options: { sparse: true } },
     ];
     for (const index of requiredIndexes) {
       const exists = existingIndexes.some(
@@ -182,7 +253,7 @@ const ensureIndexes = async () => {
           JSON.stringify(existingIndex.key) === JSON.stringify(index.key)
       );
       if (!exists) {
-        await SportsSettingModel.collection.createIndex(index.key);
+        await SportsSettingModel.collection.createIndex(index.key, index.options || {});
         console.log(`Index created: ${JSON.stringify(index.key)}`);
       } else {
       }

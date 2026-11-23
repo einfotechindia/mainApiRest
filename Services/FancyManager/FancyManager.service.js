@@ -1,6 +1,7 @@
 const FancyManagerModel = require("../../Models/FancyManager/FancyManager.model");
 const { SendResponse } = require("../../Helpers/ResponseMapper");
 const { client } = require("../../Helpers/RedisHelper");
+const { emitToAllActiveUsers} =  require("../../socket.js")
 
 const REDIS_KEY = "fancyManagerConfig";
 
@@ -24,6 +25,8 @@ module.exports = {
       // Fallback to DB if Redis empty
       const allConfigs = await FancyManagerModel.find({ isDeleted: false }).lean();
       await client.set(REDIS_KEY, JSON.stringify(allConfigs));
+
+    //  _d(allConfigs , "allConfigs")
       return allConfigs;
     } catch (err) {
       console.error("FancyManager GetFromRedis error:", err.message);
@@ -67,6 +70,9 @@ module.exports = {
       });
 
       await syncToRedis();
+
+      await emitToAllActiveUsers("fancyDataUpdated", { message: "Fancy config updated" });
+
       return SendResponse(res, "success", "Fancy config created successfully", fancyConfig);
     } catch (err) {
       return SendResponse(res, "error", err.message || "Failed to create");
@@ -105,6 +111,8 @@ module.exports = {
       if (!updated) return SendResponse(res, "error", "Fancy config not found");
 
       await syncToRedis();
+      await emitToAllActiveUsers("fancyDataUpdated", { message: "Fancy config updated" });
+
       return SendResponse(res, "success", "Updated successfully", updated);
     } catch (err) {
       return SendResponse(res, "error", err.message || "Failed to update");
@@ -230,6 +238,19 @@ module.exports = {
       return SendResponse(res, "success", `Seed completed: ${result.created} created, ${result.updated} updated, ${result.skipped} unchanged`);
     } catch (err) {
       return SendResponse(res, "error", err.message || "Failed to run seed");
+    }
+  },
+
+  getFancyConfigData: async (req,res) => {
+    try {
+      const cached = await client.get(REDIS_KEY);
+      if (cached) return SendResponse(res, "success", "Fancy config retrieved successfully", JSON.parse(cached));
+      const allConfigs = await FancyManagerModel.find({ isDeleted: false }).lean();
+      await client.set(REDIS_KEY, JSON.stringify(allConfigs));
+      return SendResponse(res, "success", "Fancy config retrieved successfully", allConfigs);
+    } catch (err) {
+      console.error("FancyManager GetFromRedis error:", err.message);
+      return SendResponse(res, "error", err.message || "Failed to retrieve");
     }
   },
 };

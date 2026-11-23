@@ -1,15 +1,9 @@
-const UserModel = require("../../Models/User/User.model");
 const { ObjectId } = require("mongodb");
-const moment = require("moment");
-const { siteSetting, UserTypes } = require("../../Common/Constants");
 const {
   getOddsPositionByMarketWise,
   getMatchList,
   sessionPositionUserWise,
 } = require("../Sports/Bet.service");
-const { SendResponse } = require("../../Helpers/ResponseMapper");
-const { client } = require("../../Helpers/RedisHelper");
-const UserUtils = require("../../Helpers/UsersUtils");
 
 const {
   _dx,
@@ -23,7 +17,6 @@ const {
   convertKeyObjectAndSeperateid,
   _date,
 } = require("../../Helpers/CommonHelper");
-const TransactionLogModel = require("../../Models/TransactionLog.model");
 const StatementModel = require("../../Models/Statement.model");
 
 

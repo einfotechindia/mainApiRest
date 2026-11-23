@@ -31,10 +31,9 @@ const {
   getSettingData,
   getWebsiteDataByReq
 } = require("../../Helpers/CommonHelper");
-const { siteSetting, fetchUrl } = require("../../Common/Constants");
+const { siteSetting } = require("../../Common/Constants");
 // const moment = require("moment");
 const Joi = require("joi");
-const { lte } = require("lodash");
 const UserModel = require("../../Models/User/User.model");
 const ShareModel = require("../../Models/User/Share.model");
 const UserInternationExpoLimitModel = require("../../Models/User/UserInternationalExpoLimit.model");
@@ -106,8 +105,15 @@ module.exports = {
       const casinoMultipleTimesCoins = userData.intCasinoMultiply
         ? userData.intCasinoMultiply
         : siteSetting.casinoMultipleTimesCoins;
+      
+     // let casinoMultipleTimesCoins = userData.intCasinoMultiply ? userData.intCasinoMultiply : siteSetting.casinoMultipleTimesCoins
+      
+
+
       let balance = Math.round(userData.coins / casinoMultipleTimesCoins);
-      sendCasinoResponse(res, "success", balance);
+
+    
+     return sendCasinoResponse(res, "success", balance);
     } catch (err) {
       console.log(err);
       return sendCasinoResponse(res, "error");
@@ -252,6 +258,7 @@ module.exports = {
         );
       }
 
+
       let [casinoData, user, domainSetting] = await Promise.all([
         getInternationalGameData(bodyData.gameId),
         UserService.userDetailsByUserId(userData.userId, {
@@ -265,9 +272,13 @@ module.exports = {
         getWebsiteDataByReq(req, true)
       ])
 
+     
       let domainData = domainSetting?.domainData || {};
       let operatorId = domainData.operatorId && domainData.operatorId != null ? domainData.operatorId : process.env.OPERATOR_ID;
 
+
+      
+      
       if (!casinoData) {
         return SendResponse(
           res,
@@ -300,11 +311,14 @@ module.exports = {
       const providerName = casinoData.providerName;
       const subProviderName = casinoData.subProviderName;
 
+      operatorId = providerName == "GALAXY" ? process?.env?.GALAXY_OPERATOR_ID : operatorId
+
       let loginStatus = false;
       if (user.intCasinoStatus) {
         loginStatus = true;
       }
 
+    
       if (!loginStatus) {
         return SendResponse(
           res,
@@ -355,6 +369,12 @@ module.exports = {
         casinoMultipleTimesCoins = userData.intCasinoMultiply;
       }
 
+      casinoMultipleTimesCoins = providerName == "GALAXY" ? 1 : casinoMultipleTimesCoins
+
+
+      // _d(casinoMultipleTimesCoins)
+      //_dx(casinoData, "casinoData")
+      
       let payLoad = {
         gameId: bodyData.gameId,
         platformId: bodyData.platformId,
@@ -367,7 +387,14 @@ module.exports = {
         currency: bodyData.currency ? bodyData.currency : "INR",
       };
 
+
+  
       const loginUrlData = await UserService.casinoLoginUrl(payLoad, userData, casinoData);
+
+      //_d(loginUrlData , "loginUrlData")
+
+      //_dx(payLoad)
+      
       await client.set(`${userData.userId}_providerType`, `${casinoData.providerName}`);
 
       return SendResponse(
@@ -382,9 +409,11 @@ module.exports = {
     }
   },
   userBetRequest: async (req, res) => {
+    
     try {
       const userData = req.loggedInUser;
       const bodyData = req.body;
+      //_dx(JSON.stringify(bodyData))
       const JoiSchema = Joi.object({
         debitAmount: Joi.number().required(),
         operatorId: Joi.string().required(),
@@ -414,13 +443,23 @@ module.exports = {
         return sendCasinoResponse(res, "user_disable", 0);
       }
 
+      
       if (bodyData.debitAmount < 0) {
         return sendCasinoResponse(res, "negative_debit_amount", 0);
       }
 
+      let [casinoData, settingData] = await Promise.all([
+        getInternationalGameData(bodyData.gameId),
+        getSettingData(),
+      ]);
+      
+      
       let casinoMultipleTimesCoins = userData.intCasinoMultiply
         ? userData.intCasinoMultiply
         : siteSetting.casinoMultipleTimesCoins;
+      
+      casinoMultipleTimesCoins = casinoData.providerName == "GALAXY" ? 1 : casinoMultipleTimesCoins
+
 
       const debitAmount = bodyData.debitAmount;
 
@@ -428,12 +467,8 @@ module.exports = {
         debitAmount * casinoMultipleTimesCoins
       );
 
-      // let casinoData = await getInternationalGameData(bodyData.gameId)
-
-      let [casinoData, settingData] = await Promise.all([
-        getInternationalGameData(bodyData.gameId),
-        getSettingData(),
-      ]);
+    
+    
 
 
       if (settingData && settingData.maxIntCasinoBet && (Math.abs(actualDebitAmount) > settingData.maxIntCasinoBet)) {
@@ -445,9 +480,9 @@ module.exports = {
       }
     
       
-
-
       let balance = Math.round(userData.coins);
+
+      
       if (actualDebitAmount > balance) {
         return sendCasinoResponse(res, "no_balance", balance);
       }
@@ -527,9 +562,16 @@ module.exports = {
       }
 
       let casinoData = await getInternationalGameData(bodyData.gameId)
+
       let casinoMultipleTimesCoins = userData.intCasinoMultiply
         ? userData.intCasinoMultiply
         : siteSetting.casinoMultipleTimesCoins;
+      
+   
+      casinoMultipleTimesCoins = casinoData.providerName == "GALAXY" ? 1 : casinoMultipleTimesCoins
+
+
+
       const creditAmount = bodyData.creditAmount;
       let actualCreditAmount = Math.round(
         creditAmount * casinoMultipleTimesCoins
@@ -542,6 +584,7 @@ module.exports = {
         casinoData
       );
 
+ 
       if (resultRequest.status == "error") {
         return sendCasinoResponse(res, resultRequest.data, 0);
       }
@@ -685,7 +728,10 @@ module.exports = {
 
       const gameId = Number(bodyData.gameId);
       let casinoData = await getInternationalGameData(bodyData.gameId)
-      const casinoMultipleTimesCoins = userData.intCasinoMultiply ? userData.intCasinoMultiply : siteSetting.casinoMultipleTimesCoins
+      let casinoMultipleTimesCoins = userData.intCasinoMultiply ? userData.intCasinoMultiply : siteSetting.casinoMultipleTimesCoins
+
+      casinoMultipleTimesCoins = casinoData.providerName == "GALAXY" ? 1 : casinoMultipleTimesCoins
+
 
       const rollbackAmount = Number(bodyData.rollbackAmount);
       const actualRollbackAmount = Math.round(rollbackAmount * casinoMultipleTimesCoins);
@@ -838,7 +884,7 @@ module.exports = {
     try {
       const bodyData = req.body;
       const loginUserData = req.loggedInUser;
-      const userRes = await UserService.UserCreate(bodyData, loginUserData);
+      const userRes = await UserService.UserCreate(bodyData, loginUserData , req);
       if (userRes.status != "Success") {
         return SendResponse(res, "error", userRes.message);
       }

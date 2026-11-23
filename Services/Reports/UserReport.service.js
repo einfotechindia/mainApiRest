@@ -195,7 +195,6 @@ const getIpReport = async (req, res) => {
       {
         $match: {
           [userField]: new ObjectId(userId),
-          userType: "client",
           lastIp: { $ne: null, $exists: true },
         },
       },
@@ -207,6 +206,7 @@ const getIpReport = async (req, res) => {
               userId: "$_id",
               username: "$username",
               name: "$name",
+              userType: "$userType",
               lastLoginTime: "$lastLoginTime",
               status: "$status",
             },

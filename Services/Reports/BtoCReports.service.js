@@ -5,12 +5,8 @@ const OddsBetsListModel = require("../../Models/BetsList/OddsBetsList.model");
 const FancyBetsListModel = require("../../Models/BetsList/FancyBetsList.model");
 const CasinoBetsListModel = require("../../Models/BetsList/CasinoBetsList.model");
 const IntCasinoBetsListModel = require("../../Models/BetsList/InternationalCasinoBetsList.model");
-const LedgerModel = require("../../Models/Ledger.model");
-const StatementModel = require("../../Models/Statement.model");
 const LoginActivityModel = require("../../Models/LoginActivity.model");
-const ActivityModel = require("../../Models/Activity.model");
 const ProfitLossPositionModel = require("../../Models/BetsList/profitLossPosition.model");
-const { ObjectId } = require("mongodb");
 const { SendResponse } = require("../../Helpers/ResponseMapper");
 const { whereHelper, dateWhereCond } = require("../../Helpers/CommonHelper");
 

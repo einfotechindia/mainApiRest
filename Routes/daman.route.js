@@ -21,8 +21,10 @@ router.post("/getDownlineListByClientId", verifyToken, damanController.getDownli
 router.post("/getTrackingActivites", verifyToken, damanController.getTrackingActivites); 
 router.post("/checkIpAddress", verifyToken, damanController.checkIpAddress); 
 router.post("/deleteTrackingActivities", verifyToken, damanController.deleteTrackingActivities); 
-router.post("/updateBetsData", verifyToken, damanController.updateBetsData); 
+
+router.post("/updateBetsData", verifyToken,isOwnerAndStaff,damanController.updateBetsData); 
 router.post("/deleteBetsDataPermanently", verifyToken, isOwnerAndStaff , damanController.deleteBetsDataPermanently); 
+router.post("/getUpdateDeleteBetData", verifyToken, isOwnerAndStaff , damanController.getUpdateDeleteBetData); 
 
 
 // nitin Database Routes

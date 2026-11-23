@@ -188,6 +188,9 @@ function checkUrlForAttacks(url) {
 
 const securityGuard = (req, res, next) => {
   try {
+    // Bypass whitelisted IPs (set by app.js middleware)
+    if (req.isBypassed) return next();
+
     // 1. Check URL path + query string
     const urlCheck = checkUrlForAttacks(req.originalUrl);
     if (urlCheck) {

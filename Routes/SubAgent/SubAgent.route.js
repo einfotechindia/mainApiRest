@@ -8,6 +8,7 @@ const { upload, handleUpload } = require("../../Controllers/SubAgent/FileUpload.
 const CEController = require("../../Controllers/SubAgent/ClientEngagement.controller");
 const AdvController = require("../../Controllers/SubAgent/Advanced.controller");
 const AffController = require("../../Controllers/SubAgent/Affiliate.controller");
+const ReportsController = require("../../Controllers/SubAgent/SubAgentReports.controller");
 
 // File Upload (local - works without S3)
 router.post("/upload", verifySubAgentToken, upload.single("image"), handleUpload);
@@ -165,5 +166,29 @@ router.post("/affiliate/earnings", verifySubAgentToken, AffController.Earnings);
 router.post("/affiliate/settle", verifySubAgentToken, AffController.SettleCommission);
 router.post("/affiliate/mark-paid", verifySubAgentToken, AffController.MarkPaid);
 router.post("/affiliate/dashboard", verifySubAgentToken, AffController.AffiliateDashboard);
+
+// SubAgent Reports
+router.post("/reports/overview", verifySubAgentToken, ReportsController.OverviewReport);
+router.post("/reports/dw-summary", verifySubAgentToken, ReportsController.DWSummaryReport);
+router.post("/reports/client-summary", verifySubAgentToken, ReportsController.ClientSummaryReport);
+router.post("/reports/commission-summary", verifySubAgentToken, ReportsController.CommissionSummaryReport);
+router.post("/reports/performance", verifySubAgentToken, ReportsController.PerformanceReport);
+router.post("/reports/subagent-list-stats", verifySubAgentToken, ReportsController.SubAgentListStats);
+router.post("/reports/betting", verifySubAgentToken, ReportsController.BettingReport);
+router.post("/reports/pl", verifySubAgentToken, ReportsController.PLReport);
+router.post("/reports/casino", verifySubAgentToken, ReportsController.SubAgentCasinoReport);
+router.post("/reports/fancy", verifySubAgentToken, ReportsController.SubAgentFancyReport);
+router.post("/reports/client-login", verifySubAgentToken, ReportsController.ClientLoginReport);
+router.post("/reports/duplicate-ip", verifySubAgentToken, ReportsController.DuplicateIPReport);
+router.post("/reports/client-balance", verifySubAgentToken, ReportsController.ClientBalanceReport);
+router.post("/reports/payment-method", verifySubAgentToken, ReportsController.PaymentMethodReport);
+router.post("/reports/utr", verifySubAgentToken, ReportsController.UTRReport);
+router.post("/reports/settlement", verifySubAgentToken, ReportsController.SettlementReport);
+router.post("/reports/client-growth", verifySubAgentToken, ReportsController.ClientGrowthReport);
+router.post("/reports/turnover", verifySubAgentToken, ReportsController.TurnoverReport);
+router.post("/reports/comparison", verifySubAgentToken, ReportsController.SubAgentComparison);
+router.post("/reports/referral-funnel", verifySubAgentToken, ReportsController.ReferralFunnelReport);
+router.post("/reports/high-exposure", verifySubAgentToken, ReportsController.HighExposureClients);
+router.post("/reports/audit", verifySubAgentToken, ReportsController.SubAgentAudit);
 
 module.exports = router;

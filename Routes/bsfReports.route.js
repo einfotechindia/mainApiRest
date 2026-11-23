@@ -24,5 +24,8 @@ router.post(
 router.post("/sportsProfitLoss", verifyToken, reportsServices.sportsProfitLoss);
 router.post("/chipSummary", verifyToken, reportsServices.chipSummary);
 router.post("/weeklyReport", verifyToken, reportsServices.weeklyReport);
+router.post("/getBsfLedger", verifyToken, reportsServices.getBsfLedger);
+
+
 
 module.exports = router;
